@@ -246,8 +246,9 @@ Presets: [`PUBLISHING.md`](./PUBLISHING.md).
 | Method | Path | Description |
 |---|---|---|
 | POST ✅ | `/content/adapt` | Generate per-platform variants |
-| GET ⏳ | `/clips/:id/variants` | List variants |
-| PATCH ⏳ | `/variants/:id` | Edit caption/hashtags |
+| GET ✅ | `/content/clips/:id/variants` | List variants |
+| PATCH ✅ | `/content/variants/:id` | Edit caption/hashtags |
+| GET ✅ | `/content/trends?topic=&niche=&geo=` | Live trend titles + suggested tags |
 | POST ✅ | `/content/publish` | Publish or schedule |
 | GET ✅ | `/content/publish?project_id=` | Publish jobs and statuses |
 | POST ⏳ | `/variants/:id/publish` | Publish a variant |

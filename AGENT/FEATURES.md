@@ -247,12 +247,12 @@
 - **How:** Duration clamp, reframe, caption rewrite in platform tone, hashtag selection.
 - **Value:** Post everywhere without redoing work.
 
-### F7.3 Variant Preview and Editing 🔧 · M
+### F7.3 Variant Preview and Editing ✅ · M
 - **What:** See and edit each platform's caption, title and hashtags with live character counters and safe-zone overlay.
 - **How:** `platform_variants` rows editable via `PATCH /variants/:id`.
 - **Value:** Final polish before posting.
 
-### F7.4 Validation Warnings ⏳ · M
+### F7.4 Validation Warnings ✅ · M
 - **What:** Alerts for over-length clips, long captions, too many hashtags.
 - **How:** Validators run per preset; surfaced in the UI rather than silently truncating.
 - **Value:** Avoids rejected or poorly performing posts.

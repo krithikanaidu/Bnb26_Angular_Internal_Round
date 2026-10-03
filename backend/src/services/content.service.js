@@ -52,15 +52,22 @@ function generateClips(segments, { minLen = 20, maxLen = 45 } = {}) {
   return clips.sort((a, b) => b.viralityScore - a.viralityScore).slice(0, 6);
 }
 
-// Multi-platform adaptation presets
-const PLATFORM_PRESETS = {
-  tiktok: { aspect: '9:16', maxSec: 180, captionMax: 2200, hashtags: 5, safeZones: 'top 150px / bottom 300px', notes: 'Loud hook in 1s, captions burned-in, trending sound.' },
-  reels: { aspect: '9:16', maxSec: 90, captionMax: 2200, hashtags: 8, safeZones: 'bottom 350px UI', notes: 'Trial reels to non-followers first.' },
-  shorts: { aspect: '9:16', maxSec: 180, captionMax: 5000, hashtags: 4, safeZones: 'title-safe center', notes: '#Shorts in title/desc boosts shelf.' },
-  x: { aspect: '16:9 or 1:1', maxSec: 140, captionMax: 280, hashtags: 2, safeZones: 'center', notes: 'Front-load punchline, subtitles essential (muted autoplay).' },
-  linkedin: { aspect: '1:1 or 16:9', maxSec: 600, captionMax: 3000, hashtags: 5, safeZones: 'center', notes: 'Professional tone, add 3-line lesson + CTA.' },
-  youtube: { aspect: '16:9', maxSec: 7200, captionMax: 5000, hashtags: 6, safeZones: 'full bleed ok', notes: 'Chapters from clip boundaries.' },
-};
+// Multi-platform adaptation presets — full schema lives in config/platformPresets.js
+// (PUBLISHING.md §2). Legacy aliases (maxSec/captionMax/notes/safeZones) are kept
+// so existing callers keep working.
+const PRESETS = require('../config/platformPresets');
+
+function withLegacy(p) {
+  return {
+    ...p,
+    maxSec: p.duration.max,
+    captionMax: p.caption.max_chars,
+    hashtagsCount: p.hashtags.max,
+    safeZones: `top ${(p.safe_zone.top * 100).toFixed(0)}% / bottom ${(p.safe_zone.bottom * 100).toFixed(0)}%`,
+  };
+}
+
+const PLATFORM_PRESETS = Object.fromEntries(Object.entries(PRESETS).map(([k, p]) => [k, withLegacy(p)]));
 
 function adaptClip(clip, platform) {
   const p = PLATFORM_PRESETS[platform] || PLATFORM_PRESETS.tiktok;
@@ -68,8 +75,8 @@ function adaptClip(clip, platform) {
   const actions = [];
   if (dur > p.maxSec) actions.push(`Trim ${dur.toFixed(0)}s → ${p.maxSec}s (keep highest-energy window)`);
   actions.push(`Reframe to ${p.aspect}, keep faces in center-safe zone`);
-  actions.push(`Rewrite caption ≤ ${p.captionMax} chars, ${p.hashtags} hashtags`);
-  return { platform, preset: p, actions, caption: `${clip.hookText || clip.title || 'New drop'} 🔥`, hashtags: ['#creatorai', `#${platform}`, '#shorts', '#contentops'].slice(0, p.hashtags) };
+  actions.push(`Rewrite caption ≤ ${p.captionMax} chars, ${p.hashtagsCount ?? p.hashtags?.max ?? 5} hashtags`);
+  return { platform, preset: p, actions, caption: `${clip.hookText || clip.title || 'New drop'} 🔥`, hashtags: ['#creatorai', `#${platform}`, '#shorts', '#contentops'].slice(0, p.hashtagsCount ?? 5) };
 }
 
 module.exports = { alignScriptToTranscript, generateClips, PLATFORM_PRESETS, adaptClip };

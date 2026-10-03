@@ -1,12 +1,25 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import PlatformPicker from '../components/PlatformPicker';
+import VariantPreview from '../components/VariantPreview';
 
+// Domain 7: Multi-Platform Adaptation (F7.1–F7.4) + handoff to scheduling (F8.1).
+// One clip → persisted per-platform variants → edit with validation → schedule.
 export default function Publish() {
   const [clips, setClips] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [clipId, setClipId] = useState('');
-  const [platform, setPlatform] = useState('tiktok');
-  const [adapted, setAdapted] = useState([]);
+  const [platforms, setPlatforms] = useState(['tiktok', 'reels', 'shorts']);
+  const [variants, setVariants] = useState([]);
+  const [engine, setEngine] = useState(null);
+  const [edlMeta, setEdlMeta] = useState(null);
+  const [trendsMeta, setTrendsMeta] = useState(null);
+  const [trendTags, setTrendTags] = useState([]);
+  const [pickedTags, setPickedTags] = useState([]);
+  const [trendsBusy, setTrendsBusy] = useState(false);
+  const [niche, setNiche] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
 
   const load = async () => {
     const [c, j] = await Promise.all([api.get('/content/clips'), api.get('/content/publish')]);
@@ -14,37 +27,149 @@ export default function Publish() {
   };
   useEffect(() => { load(); }, []);
 
-  const adapt = async () => {
-    if (!clipId) return alert('Pick a clip');
-    const { data } = await api.post('/content/adapt', { clipId, platforms: ['tiktok', 'reels', 'shorts', 'x', 'linkedin'] });
-    setAdapted(data);
+  useEffect(() => {
+    if (!clipId) { setVariants([]); setTrendTags([]); setPickedTags([]); setTrendsMeta(null); setEdlMeta(null); return; }
+    api.get(`/content/clips/${clipId}/variants`).then((r) => {
+      setVariants(r.data);
+      const withEdl = r.data.find((v) => v.edlVersion != null);
+      if (withEdl) setEdlMeta({ version: withEdl.edlVersion });
+    }).catch(() => {});
+  }, [clipId]);
+
+  const clip = clips.find((c) => c.id === clipId);
+
+  const loadTrends = async () => {
+    if (!clip) return;
+    setTrendsBusy(true);
+    try {
+      const { data } = await api.get('/content/trends', { params: { topic: clip.title || '', niche } });
+      setTrendTags(data.tags || []);
+      setPickedTags((data.tags || []).slice(0, 6));
+      setTrendsMeta({ source: data.source });
+    } catch {
+      setTrendsMeta({ source: 'unavailable — server will use evergreen tags' });
+    } finally { setTrendsBusy(false); }
   };
-  const publish = async (p) => {
-    await api.post('/content/publish', { clipId, platform: p, projectId: clips.find((c) => c.id === clipId)?.projectId, caption: adapted.find((a) => a.platform === p)?.caption || 'New drop', scheduledAt: new Date(Date.now() + 3600e3) });
+
+  const toggleTag = (t) => setPickedTags((ts) => (ts.includes(t) ? ts.filter((x) => x !== t) : [...ts, t]));
+
+  const adapt = async () => {
+    if (!clipId) { setErr('Pick a clip first.'); return; }
+    if (!platforms.length) { setErr('Toggle at least one platform.'); return; }
+    setErr(null); setBusy(true);
+    try {
+      // pickedTags empty → server auto-fetches internet trends for the clip topic
+      const { data } = await api.post('/content/adapt', {
+        clipId, platforms, topic: clip?.title || '', niche, topicTags: pickedTags,
+      });
+      setVariants(data.variants || []);
+      setEngine(data.engine);
+      setEdlMeta(data.edl || null);
+      setTrendsMeta(data.trends || null);
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Adaptation failed. Is the backend running?');
+    } finally { setBusy(false); }
+  };
+
+  const saveVariant = async (id, draft) => {
+    const { data } = await api.patch(`/content/variants/${id}`, draft);
+    setVariants((vs) => vs.map((v) => (v.id === id ? { ...v, ...data } : v)));
+  };
+
+  const schedule = async (variant, when) => {
+    const clip = clips.find((c) => c.id === clipId);
+    await api.post('/content/publish', {
+      variant_id: variant.id, clipId, projectId: clip?.projectId,
+      platform: variant.platform, caption: variant.caption,
+      scheduledAt: when ? new Date(when) : null,
+    });
+    load();
+  };
+
+  const retry = async (id) => {
+    await api.post(`/content/publish/${id}/retry`);
+    load();
+  };
+
+  const cancel = async (id) => {
+    await api.delete(`/content/publish/${id}`);
     load();
   };
 
   return (
     <div className="grid">
-      <h2>Multi-Platform Adaptation & Publishing</h2>
-      <div className="card row">
-        <select value={clipId} onChange={(e) => setClipId(e.target.value)} style={{ maxWidth: 320 }}>
-          <option value="">Select clip</option>{clips.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
-        </select>
-        <button onClick={adapt}>Adapt for all platforms</button>
+      <div className="page-head">
+        <div>
+          <h1>Adapt & publish</h1>
+          <p>One clip becomes platform-ready variants — true aspect, rewritten captions, validated limits — then schedule per platform.</p>
+        </div>
       </div>
-      <div className="grid g3">
-        {adapted.map((a) => (
-          <div className="card" key={a.platform}><b>{a.platform}</b> <span className="pill">{a.preset.aspect} · ≤{a.preset.maxSec}s</span>
-            <ul>{a.actions.map((x, i) => <li key={i}><small>{x}</small></li>)}</ul>
-            <div className="mut"><small>{a.preset.notes}</small></div>
-            <div><small>#{a.hashtags.join(' #')}</small></div><br />
-            <button onClick={() => publish(a.platform)}>Schedule to {a.platform}</button>
+      {err && <p className="error-text">⚠ {err}</p>}
+
+      <div className="card">
+        <h3>1 · Source clip</h3>
+        <div className="row">
+          <select value={clipId} onChange={(e) => setClipId(e.target.value)} style={{ maxWidth: 340 }} aria-label="Select clip">
+            <option value="">Select clip</option>
+            {clips.map((c) => <option key={c.id} value={c.id}>{c.title} ({c.startSec}s→{c.endSec}s)</option>)}
+          </select>
+          <input value={niche} onChange={(e) => setNiche(e.target.value)} placeholder="niche (e.g. B2B SaaS)" style={{ maxWidth: 220 }} aria-label="Niche" />
+        </div>
+        <h3 style={{ marginTop: 16 }}>2 · Trend tags from the internet</h3>
+        <p className="mut"><small>Live Reddit + Hacker News trends plus Groq niche tags. Toggle tags to feed adaptation — or adapt directly and the server fetches them for the clip topic.</small></p>
+        <div className="row">
+          <button className="ghost" onClick={loadTrends} disabled={!clip || trendsBusy}>{trendsBusy ? 'Fetching…' : 'Fetch trend tags'}</button>
+          {trendsMeta && <span className="pill">source: {trendsMeta.source}</span>}
+        </div>
+        {trendTags.length > 0 && (
+          <div className="row" style={{ marginTop: 8 }}>
+            {trendTags.map((t) => (
+              <button key={t} type="button" onClick={() => toggleTag(t)}
+                style={pickedTags.includes(t) ? { background: 'var(--yellow)' } : {}}
+                aria-pressed={pickedTags.includes(t)}>{pickedTags.includes(t) ? '✓ ' : ''}{t}</button>
+            ))}
           </div>
-        ))}
+        )}
+        <h3 style={{ marginTop: 16 }}>3 · Platforms</h3>
+        <PlatformPicker value={platforms} onChange={setPlatforms} />
+        <button className="primary" onClick={adapt} disabled={busy} style={{ marginTop: 14 }}>
+          {busy ? 'Adapting…' : variants.length ? 'Re-adapt for selected platforms' : 'Adapt for selected platforms'}
+        </button>
+        <div className="row" style={{ marginTop: 8 }}>
+          {engine && <span className="pill">captions engine: {engine}</span>}
+          {edlMeta && <span className="pill">based on EDL v{edlMeta.version}{edlMeta.ctaSource ? ` · CTA from ${edlMeta.ctaSource}` : ''}</span>}
+          {!edlMeta && clipId && <span className="pill">no Studio edit yet — preset defaults used</span>}
+        </div>
+        {edlMeta && <p className="mut"><small>Edit the clip in Studio and re-adapt — the new EDL version flows in automatically.</small></p>}
       </div>
-      <h3>Scheduled / published</h3>
-      {jobs.map((j) => <div className="card" key={j.id}><b>{j.platform}</b> <span className="pill">{j.status}</span> <span className="mut"><small>{j.caption} · {j.scheduledAt}</small></span></div>)}
+
+      {variants.length > 0 && (
+        <>
+          <h2>Variants <span className="pill">{variants.length}</span></h2>
+          <div className="grid g2">
+            {variants.map((v) => (
+              <VariantPreview key={v.id} variant={v} onSave={saveVariant} onSchedule={schedule} />
+            ))}
+          </div>
+        </>
+      )}
+      {clipId && !variants.length && !busy && (
+        <div className="card"><p className="mut">No variants yet for this clip — adapt above, or pick another clip.</p></div>
+      )}
+
+      <h2>Scheduled / published</h2>
+      {jobs.map((j) => (
+        <div className="card" key={j.id}>
+          <b>{j.platform}</b>{' '}
+          <span className="pill"><span className="dot" style={{ background: j.status === 'published' ? 'var(--olive)' : j.status === 'failed' ? 'var(--coral)' : 'var(--orchid)' }} />{j.status}</span>{' '}
+          <span className="mut"><small>{j.caption} · {j.scheduledAt ? new Date(j.scheduledAt).toLocaleString() : 'draft'}</small></span>
+          <div className="row" style={{ marginTop: 8 }}>
+            {j.status === 'failed' && <button className="coral" onClick={() => retry(j.id)}>Retry publish</button>}
+            {['scheduled', 'draft'].includes(j.status) && <button className="ghost" onClick={() => cancel(j.id)}>Cancel</button>}
+          </div>
+        </div>
+      ))}
+      {!jobs.length && <p className="mut">Nothing scheduled yet.</p>}
     </div>
   );
 }
