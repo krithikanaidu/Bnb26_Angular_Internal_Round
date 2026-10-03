@@ -5,6 +5,8 @@ import Assets from './pages/Assets';
 import Scripts from './pages/Scripts';
 import Studio from './pages/Studio';
 import Publish from './pages/Publish';
+import Insights from './pages/Insights';
+import Calendar from './pages/Calendar';
 
 export default function App() {
   return (
@@ -16,6 +18,8 @@ export default function App() {
           <Route path="scripts" element={<Scripts />} />
           <Route path="studio" element={<Studio />} />
           <Route path="publish" element={<Publish />} />
+          <Route path="insights" element={<Insights />} />
+          <Route path="calendar" element={<Calendar />} />
         </Route>
       </Routes>
     </BrowserRouter>
