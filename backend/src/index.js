@@ -17,8 +17,19 @@ app.use('/api/content', require('./routes/content'));
 
 const PORT = process.env.PORT || 5000;
 (async () => {
-  await sequelize.sync({ alter: true });
-  console.log('[db] synced');
-  await ensureBucket().catch((e) => console.warn('[supabase]', e.message));
-  app.listen(PORT, () => console.log(`CreatorAI backend on :${PORT}`));
+  try {
+    await sequelize.authenticate();
+    console.log('[db] connected to Supabase Postgres');
+    await sequelize.sync({ alter: true });
+    console.log('[db] synced');
+    await ensureBucket().catch((e) => console.warn('[supabase]', e.message));
+    app.listen(PORT, () => console.log(`CreatorAI backend on :${PORT}`));
+  } catch (e) {
+    console.error('[fatal] Could not connect to Supabase Postgres.');
+    console.error('  1. Copy backend/.env.example -> backend/.env');
+    console.error('  2. Set DATABASE_URL from Supabase Dashboard > Project Settings > Database > Connection string (pooler :6543).');
+    console.error('  3. Run supabase/schema.sql once in Supabase SQL editor.');
+    console.error(`  Details: ${e.message}`);
+    process.exit(1);
+  }
 })();
