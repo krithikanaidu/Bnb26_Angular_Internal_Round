@@ -58,6 +58,22 @@ const Clip = define('Clip', {
   hookText: DataTypes.TEXT,
   captions: { type: DataTypes.JSONB, defaultValue: [] },
   status: { type: DataTypes.STRING, defaultValue: 'suggested' },
+  // Render/extras bag (ClipAI output file, job id, transcript mode…)
+  meta: { type: DataTypes.JSONB, defaultValue: {} },
+});
+
+// ClipAI render job: upload → transcribe → score → trim/9:16/subs → mp4s
+const ClipJob = define('ClipJob', {
+  projectId: DataTypes.UUID,
+  sourceName: DataTypes.STRING,
+  sourcePath: DataTypes.TEXT,
+  status: { type: DataTypes.STRING, defaultValue: 'queued' }, // queued|transcribing|finding|rendering|titling|done|error
+  stage: { type: DataTypes.STRING, defaultValue: 'queued' },
+  progress: { type: DataTypes.FLOAT, defaultValue: 0 },
+  options: { type: DataTypes.JSONB, defaultValue: {} },
+  transcript: { type: DataTypes.JSONB, defaultValue: null },
+  outputs: { type: DataTypes.JSONB, defaultValue: [] },
+  error: DataTypes.TEXT,
 });
 
 const EditProject = define('EditProject', {
@@ -96,6 +112,7 @@ Project.hasMany(Asset, { foreignKey: 'project_id' });
 Asset.belongsTo(Project, { foreignKey: 'project_id' });
 Project.hasMany(Script, { foreignKey: 'project_id' });
 Project.hasMany(Clip, { foreignKey: 'project_id' });
+Project.hasMany(ClipJob, { foreignKey: 'project_id' });
 Script.hasMany(Hook, { foreignKey: 'script_id' });
 
-module.exports = { sequelize, Project, Asset, Script, Hook, TranscriptSegment, Clip, EditProject, PublishJob, Metric };
+module.exports = { sequelize, Project, Asset, Script, Hook, TranscriptSegment, Clip, EditProject, PublishJob, Metric, ClipJob };

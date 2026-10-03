@@ -10,7 +10,9 @@ export default function Layout() {
           <NavLink to="/assets">Assets</NavLink>
           <NavLink to="/scripts">Scripts & Hooks</NavLink>
           <NavLink to="/studio">Script→Video & Clips</NavLink>
+          <NavLink to="/clips">✂️ Auto Clips</NavLink>
           <NavLink to="/publish">Adapt & Publish</NavLink>
+          <NavLink to="/video-editor">🎬 Video Editor</NavLink>
         </nav>
         <div style={{ marginTop: 18 }} className="card"><small className="mut">Backend: Express + Sequelize + Supabase<br />AI: OpenAI / heuristic fallback</small></div>
       </aside>

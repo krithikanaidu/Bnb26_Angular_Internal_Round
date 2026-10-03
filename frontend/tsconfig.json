@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": false,
+    "strictPropertyInitialization": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": false,
+    "allowJs": true,
+    "checkJs": false,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/video-editor/*"],
+      "next/navigation": ["./src/video-editor/shims/next-navigation.js"],
+      "next/image": ["./src/video-editor/shims/next-image.jsx"],
+      "next-themes": ["./src/video-editor/shims/next-themes.jsx"],
+      "next/server": ["./src/video-editor/shims/next-server.js"]
+    },
+    "types": ["vite/client"]
+  },
+  "include": ["src", "vite.config.js"]
+}
