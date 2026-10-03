@@ -1,10 +1,12 @@
 # ── Env files: never commit real secrets ──
 # (templates like .env.example stay tracked)
 .env
+.env.*
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+backend/ .env
 
 # ── Dependencies ──
 node_modules/
