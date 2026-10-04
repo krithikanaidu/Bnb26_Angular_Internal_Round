@@ -84,6 +84,11 @@ export default function IdeationPage() {
       content: s.body,
       beats: Array.isArray(s.beats) ? s.beats : [],
       supporting: s.supporting || {},
+      visuals: s.visuals || [],
+      shotList: s.shotList || [],
+      teleprompter: s.teleprompter || '',
+      meta: s.meta || {},
+      brief: s.brief || {},
       version: Number(s.version) || 1,
       engine: 'saved',
     });

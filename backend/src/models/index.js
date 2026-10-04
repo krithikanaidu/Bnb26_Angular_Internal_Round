@@ -34,6 +34,50 @@ const Script = define('Script', {
   hookPatternId: DataTypes.UUID,
   beats: { type: DataTypes.JSONB, defaultValue: [] },
   supporting: { type: DataTypes.JSONB, defaultValue: {} },
+  // richer brief (F3.3+) — all optional, backward compatible
+  brief: { type: DataTypes.JSONB, defaultValue: {} },
+  audience: DataTypes.TEXT,
+  goal: DataTypes.TEXT,
+  language: { type: DataTypes.STRING, defaultValue: 'en' },
+  visuals: { type: DataTypes.JSONB, defaultValue: [] },
+  shotList: { type: DataTypes.JSONB, defaultValue: [] },
+  teleprompter: DataTypes.TEXT,
+  meta: { type: DataTypes.JSONB, defaultValue: {} },
+});
+
+const ScriptFeedback = define('ScriptFeedback', {
+  scriptId: DataTypes.UUID,
+  projectId: DataTypes.UUID,
+  eventType: { type: DataTypes.STRING, defaultValue: 'generate' }, // generate|refine_preview|refine_accept|auto_improve|auto_improve_accept|edit|rate|reuse|approve|reject
+  actor: { type: DataTypes.STRING, defaultValue: 'creator' }, // creator|manager|system
+  rating: DataTypes.INTEGER, // -1/1 or 1-5, null = no rating
+  instruction: DataTypes.TEXT,
+  editedBody: DataTypes.TEXT,
+  meta: { type: DataTypes.JSONB, defaultValue: {} },
+});
+
+const ScriptExample = define('ScriptExample', {
+  topic: DataTypes.TEXT,
+  brief: { type: DataTypes.JSONB, defaultValue: {} },
+  output: { type: DataTypes.JSONB, defaultValue: {} },
+  quality: { type: DataTypes.FLOAT, defaultValue: 0.8 },
+  source: { type: DataTypes.STRING, defaultValue: 'user-approved' },
+  actor: { type: DataTypes.STRING, defaultValue: 'creator' }, // who approved
+  approvalCount: { type: DataTypes.INTEGER, defaultValue: 1 },
+  performanceScore: { type: DataTypes.FLOAT, defaultValue: 0 }, // 0-1 from Metrics join
+  styleTags: { type: DataTypes.JSONB, defaultValue: {} }, // {tone,audience,punchiness,...}
+  usageCount: { type: DataTypes.INTEGER, defaultValue: 0 },
+});
+
+// Per-workspace learned style (manager + creator signals merged, manager weighs 2x)
+const WorkspaceProfile = define('WorkspaceProfile', {
+  workspaceKey: { type: DataTypes.STRING, defaultValue: 'default' }, // projectId or 'default' until auth lands
+  preferredTones: { type: DataTypes.JSONB, defaultValue: {} }, // {punchy:3,...}
+  preferredAudiences: { type: DataTypes.JSONB, defaultValue: [] },
+  avgLengthSec: DataTypes.FLOAT,
+  ctaStyle: DataTypes.TEXT,
+  topCategories: { type: DataTypes.JSONB, defaultValue: [] },
+  stats: { type: DataTypes.JSONB, defaultValue: {} }, // {approvals, rejects, avgRating, lastComputed}
 });
 
 const HookPattern = define('HookPattern', {
@@ -133,4 +177,4 @@ Script.hasMany(Hook, { foreignKey: 'script_id' });
 Clip.hasMany(PlatformVariant, { foreignKey: 'clip_id' });
 PlatformVariant.belongsTo(Clip, { foreignKey: 'clip_id' });
 
-module.exports = { sequelize, Project, Asset, Script, Hook, HookPattern, TranscriptSegment, Clip, EditProject, PublishJob, PlatformVariant, Metric };
+module.exports = { sequelize, Project, Asset, Script, ScriptFeedback, ScriptExample, WorkspaceProfile, Hook, HookPattern, TranscriptSegment, Clip, EditProject, PublishJob, PlatformVariant, Metric };

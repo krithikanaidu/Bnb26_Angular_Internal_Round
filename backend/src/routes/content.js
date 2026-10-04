@@ -28,56 +28,73 @@ router.get('/scripts', async (req, res) => {
 });
 
 // --- Script-to-video understanding ---
+// NOTE: content-only pipeline. No MP4 is rendered here — output is timestamps +
+// EDL JSON (editable plan). Real video render (FFmpeg, F6.9) is planned, not live.
 router.post('/align', async (req, res) => {
-  const { scriptBody, assetId, projectId } = req.body;
-  const where = assetId ? { assetId } : projectId ? { projectId } : {};
-  const segments = await TranscriptSegment.findAll({ where, order: [['startSec', 'ASC']] });
-  if (!segments.length) return res.status(400).json({ error: 'No transcript segments. Upload footage first (demo segments auto-seed).' });
-  res.json({ alignment: alignScriptToTranscript(scriptBody, segments), segments });
+  try {
+    const { scriptBody, assetId, projectId } = req.body;
+    if (!scriptBody || !String(scriptBody).trim()) return res.status(400).json({ error: 'scriptBody is required. Paste a script first.' });
+    const where = assetId ? { assetId } : projectId ? { projectId } : {};
+    const segments = await TranscriptSegment.findAll({ where, order: [['startSec', 'ASC']] });
+    if (!segments.length) return res.status(400).json({ error: 'No transcript segments. Upload footage first (demo segments auto-seed on upload).', code: 'NO_TRANSCRIPT' });
+    res.json({ alignment: alignScriptToTranscript(scriptBody, segments), segments, mode: 'content-only' });
+  } catch (e) { res.status(500).json({ error: e.message || 'align failed' }); }
 });
 
 // --- Automated clip generation ---
 router.post('/clips/generate', async (req, res) => {
-  const { assetId, projectId } = req.body;
-  const where = assetId ? { assetId } : projectId ? { projectId } : {};
-  const segments = await TranscriptSegment.findAll({ where, order: [['startSec', 'ASC']] });
-  const cands = generateClips(segments);
-  const saved = [];
-  for (const [i, c] of cands.entries()) {
-    saved.push(await Clip.create({ projectId: projectId || segments[0]?.projectId || null, assetId: assetId || segments[0]?.assetId || null, title: `Clip ${i + 1} — ${c.hookText.slice(0, 40)}`, startSec: c.startSec, endSec: c.endSec, viralityScore: c.viralityScore, hookText: c.hookText, captions: [{ t: c.startSec, text: c.hookText }] }));
-  }
-  res.status(201).json(saved);
+  try {
+    const { assetId, projectId } = req.body;
+    const where = assetId ? { assetId } : projectId ? { projectId } : {};
+    const segments = await TranscriptSegment.findAll({ where, order: [['startSec', 'ASC']] });
+    if (!segments.length) return res.status(400).json({ error: 'No transcript segments. Upload a video first — transcript auto-seeds on upload.', code: 'NO_TRANSCRIPT' });
+    const cands = generateClips(segments);
+    if (!cands.length) return res.status(400).json({ error: 'Footage too short for a 20s+ clip. Upload a longer video or lower minLen.', code: 'TOO_SHORT' });
+    const saved = [];
+    for (const [i, c] of cands.entries()) {
+      saved.push(await Clip.create({ projectId: projectId || segments[0]?.projectId || null, assetId: assetId || segments[0]?.assetId || null, title: `Clip ${i + 1} — ${(c.hookText || 'highlight').slice(0, 40)}`, startSec: c.startSec, endSec: c.endSec, viralityScore: c.viralityScore, hookText: c.hookText, captions: [{ t: c.startSec, text: c.hookText }] }));
+    }
+    res.status(201).json(saved);
+  } catch (e) { res.status(500).json({ error: e.message || 'clip generation failed' }); }
 });
 
 router.get('/clips', async (req, res) => {
-  const where = req.query.projectId ? { projectId: req.query.projectId } : {};
-  res.json(await Clip.findAll({ where, order: [['viralityScore', 'DESC']] }));
+  try {
+    const where = req.query.projectId ? { projectId: req.query.projectId } : {};
+    res.json(await Clip.findAll({ where, order: [['viralityScore', 'DESC']] }));
+  } catch (e) { res.status(500).json({ error: e.message || 'list clips failed' }); }
 });
 
 // --- AI-assisted editable edits (EDL stays editable) ---
 router.post('/edits', async (req, res) => {
-  const { projectId, clipId, platform = 'tiktok', tweaks = {} } = req.body;
-  const clip = clipId ? await Clip.findByPk(clipId) : null;
-  const edl = {
-    tracks: [{ type: 'video', cuts: [{ start: clip?.startSec ?? 0, end: clip?.endSec ?? 30, speed: 1.1 }] }],
-    captions: clip?.captions || [{ t: 0, text: clip?.hookText || 'Hook here' }],
-    overlays: [{ type: 'hookTitle', text: clip?.hookText || 'Hook', style: platform }],
-    hook: clip?.hookText || '',
-    cta: 'Follow for part 2',
-    ...tweaks,
-  };
-  const edit = await EditProject.create({ projectId, clipId, edl, platform, aspect: (PLATFORM_PRESETS[platform] || {}).aspect || '9:16' });
-  res.status(201).json(edit);
+  try {
+    const { projectId, clipId, platform = 'tiktok', tweaks = {} } = req.body;
+    const clip = clipId ? await Clip.findByPk(clipId).catch(() => null) : null;
+    const edl = {
+      tracks: [{ type: 'video', cuts: [{ start: clip?.startSec ?? 0, end: clip?.endSec ?? 30, speed: 1.1 }] }],
+      captions: clip?.captions || [{ t: 0, text: clip?.hookText || 'Hook here' }],
+      overlays: [{ type: 'hookTitle', text: clip?.hookText || 'Hook', style: platform }],
+      hook: clip?.hookText || '',
+      cta: 'Follow for part 2',
+      ...tweaks,
+    };
+    const edit = await EditProject.create({ projectId: projectId || clip?.projectId || null, clipId: clip?.id || null, edl, platform, aspect: (PLATFORM_PRESETS[platform] || {}).aspect || '9:16' });
+    res.status(201).json(edit);
+  } catch (e) { res.status(500).json({ error: e.message || 'edit creation failed' }); }
 });
 router.get('/edits', async (req, res) => {
-  const where = req.query.projectId ? { projectId: req.query.projectId } : {};
-  res.json(await EditProject.findAll({ where, order: [['createdAt', 'DESC']] }));
+  try {
+    const where = req.query.projectId ? { projectId: req.query.projectId } : {};
+    res.json(await EditProject.findAll({ where, order: [['createdAt', 'DESC']] }));
+  } catch (e) { res.status(500).json({ error: e.message || 'list edits failed' }); }
 });
 router.patch('/edits/:id', async (req, res) => {
-  const e = await EditProject.findByPk(req.params.id);
-  if (!e) return res.status(404).json({ error: 'not found' });
-  await e.update({ edl: req.body.edl ?? e.edl, version: e.version + 1 });
-  res.json(e);
+  try {
+    const e = await EditProject.findByPk(req.params.id);
+    if (!e) return res.status(404).json({ error: 'not found' });
+    await e.update({ edl: req.body.edl ?? e.edl, version: e.version + 1 });
+    res.json(e);
+  } catch (e2) { res.status(500).json({ error: e2.message || 'edit update failed' }); }
 });
 
 // --- Multi-platform adaptation (Domain 7: F7.1–F7.4) ---

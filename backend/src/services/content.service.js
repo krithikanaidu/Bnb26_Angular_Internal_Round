@@ -1,7 +1,7 @@
 // Script-to-video understanding: aligns script sentences to transcript segments
 // via keyword overlap + position prior. Lightweight, explainable, no GPU needed.
 function tokenize(s = '') {
-  return s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter((w) => w.length > 2);
+  return String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter((w) => w.length > 2);
 }
 
 function scoreOverlap(a, b) {
@@ -14,7 +14,11 @@ function scoreOverlap(a, b) {
 }
 
 function alignScriptToTranscript(scriptBody, segments) {
-  const sentences = scriptBody.split(/(?<=[.!?\n])\s+/).filter(Boolean);
+  const safeBody = String(scriptBody || '').trim();
+  const safeSegs = Array.isArray(segments) ? segments : [];
+  if (!safeBody) return [];
+  if (!safeSegs.length) return safeBody.split(/(?<=[.!?\n])\s+/).filter(Boolean).map((sentence) => ({ sentence, best: null, alternatives: [] }));
+  const sentences = safeBody.split(/(?<=[.!?\n])\s+/).filter(Boolean);
   return sentences.map((sentence, i) => {
     const scored = segments.map((seg, j) => {
       const overlap = scoreOverlap(sentence, seg.text);
@@ -27,23 +31,24 @@ function alignScriptToTranscript(scriptBody, segments) {
 
 // Auto clip generation: sliding window over transcript, scores virality
 function generateClips(segments, { minLen = 20, maxLen = 45 } = {}) {
-  if (!segments.length) return [];
+  const safe = (Array.isArray(segments) ? segments : []).filter((s) => s && Number.isFinite(s.startSec) && Number.isFinite(s.endSec));
+  if (!safe.length) return [];
   const energyWords = ['secret', 'mistake', 'free', 'stop', 'proven', 'hack', 'shocking', 'truth', 'never', 'always', 'how', 'why'];
   const clips = [];
-  for (let i = 0; i < segments.length; i++) {
+  for (let i = 0; i < safe.length; i++) {
     let dur = 0, texts = [];
-    for (let j = i; j < segments.length && dur < maxLen; j++) {
-      dur = segments[j].endSec - segments[i].startSec;
-      texts.push(segments[j].text);
+    for (let j = i; j < safe.length && dur < maxLen; j++) {
+      dur = safe[j].endSec - safe[i].startSec;
+      texts.push(String(safe[j].text || ''));
       if (dur >= minLen) {
-        const joined = texts.join(' ');
+        const joined = texts.join(' ').trim() || 'Untitled moment';
         const q = joined.split(/\?|!/).length;
         const energy = energyWords.filter((w) => joined.toLowerCase().includes(w)).length;
         const score = Math.min(0.99, 0.55 + q * 0.06 + energy * 0.07 + Math.random() * 0.05);
         clips.push({
-          startSec: segments[i].startSec, endSec: segments[j].endSec,
+          startSec: safe[i].startSec, endSec: safe[j].endSec,
           text: joined.slice(0, 220), viralityScore: +score.toFixed(2),
-          hookText: texts[0].slice(0, 90),
+          hookText: (texts[0] || 'Highlight').slice(0, 90),
         });
         break;
       }
