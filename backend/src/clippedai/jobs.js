@@ -4,7 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { transcribe } = require('./transcribe');
+const { transcribe, scrubRange } = require('./transcribe');
 const { selectClips } = require('./score');
 const { renderOne } = require('./pipeline');
 const { rankMoments, writeClipCopy } = require('./ai');
@@ -119,8 +119,11 @@ async function processJob(jobId) {
     for (let i = 0; i < selected.length; i += 1) {
       await setProgress(job, 'titling', 41 + Math.round((i / selected.length) * 4));
       const clip = selected[i];
+      // Dynamic only: copy derives from spoken words minus hallucinated loops.
+      const cleanText = scrubRange(transcript.words, clip.start_time, clip.end_time)
+        .map((w) => w.word).join(' ') || clip.text || '';
       const copy = await writeClipCopy({
-        text: clip.text || '',
+        text: cleanText,
         duration: clip.end_time - clip.start_time,
         index: i,
       });
@@ -136,11 +139,6 @@ async function processJob(jobId) {
         options,
         overrides: {
           title: copy.title,
-          hook: copy.hook,
-          poll: copy.pollQuestion,
-          pollOptions: copy.pollOptions,
-          cta: copy.cta,
-          hashtags: copy.hashtags,
         },
       });
       outputs.push(out);

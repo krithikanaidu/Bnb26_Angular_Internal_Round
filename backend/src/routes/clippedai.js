@@ -15,6 +15,7 @@ const { renderOne, CAPTION_STYLES, normaliseStyle } = require('../clippedai/pipe
 const { writeClipCopy } = require('../clippedai/ai');
 const { safeFilename } = require('../clippedai/titles');
 const { selectClips } = require('../clippedai/score');
+const { scrubRange } = require('../clippedai/transcribe');
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -261,7 +262,8 @@ async function renderAndStore({ job, words, index, overrides, append = false }) 
     throw err;
   }
 
-  const clipText = words.filter((w) => w.start >= start && w.end <= safeEnd).map((w) => w.word).join(' ');
+  // Dynamic only: copy/titles derive from spoken words minus hallucinated loops.
+  const clipText = scrubRange(words, start, safeEnd).map((w) => w.word).join(' ');
   const clip = {
     start_time: start,
     end_time: safeEnd,
@@ -298,7 +300,7 @@ router.post('/jobs/:id/clips', async (req, res) => {
     let overrides = overridesFrom(body);
     if (!overrides.title && !overrides.hook) {
       const copy = await writeClipCopy({
-        text: cached.words.filter((w) => w.start >= start && w.end <= end).map((w) => w.word).join(' '),
+        text: scrubRange(cached.words, start, end).map((w) => w.word).join(' '),
         duration: end - start,
         index: (job.outputs || []).length,
       });
@@ -448,7 +450,7 @@ router.post('/jobs/:id/recopy', async (req, res) => {
     for (let i = 0; i < outputs.length; i += 1) {
       const o = outputs[i];
       const copy = await writeClipCopy({
-        text: cached.words.filter((w) => w.start >= o.startSec && w.end <= o.endSec).map((w) => w.word).join(' '),
+        text: scrubRange(cached.words, o.startSec, o.endSec).map((w) => w.word).join(' '),
         duration: o.endSec - o.startSec,
         index: i,
       });

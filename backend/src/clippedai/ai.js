@@ -63,18 +63,31 @@ async function rankMoments(candidates, count) {
 
 const str = (v, max = 120) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
 
-/** Deterministic copy derived from the real transcript, used when no LLM. */
+/**
+ * Deterministic copy derived ONLY from the real transcript, used when no LLM.
+ * Nothing static: every field comes from words actually spoken in this clip.
+ * When the transcript is empty there is nothing to base copy on, so
+ * interactive fields stay empty instead of inventing generic text that would
+ * look the same on every short.
+ */
 function fallbackCopy(text, index) {
   const words = String(text || '').split(/\s+/).filter(Boolean);
-  const first = words.slice(0, 8).join(' ') || 'Untitled Clip';
-  const hook = str(words.slice(0, 10).join(' '), 70) || 'Watch this';
+  const first = words.slice(0, 8).join(' ');
+  const hook = str(words.slice(0, 10).join(' '), 70);
+  const titleCore = first ? first.charAt(0).toUpperCase() + first.slice(1) : '';
+  // Dynamic hashtags from the clip's own longer words (no generic #shorts).
+  const tags = [...new Set(
+    words
+      .map((w) => w.toLowerCase().replace(/[^a-z0-9]/g, ''))
+      .filter((w) => w.length >= 5),
+  )].slice(0, 3).map((w) => `#${w}`);
   return {
-    title: `${first.charAt(0).toUpperCase() + first.slice(1)}`.slice(0, 70),
-    hook,
-    pollQuestion: 'Did this make sense?',
-    pollOptions: ['Yes, totally', 'Nah, explain'],
-    cta: 'Follow for more',
-    hashtags: ['#shorts', '#viral'],
+    title: titleCore ? `${titleCore}... 🔥`.slice(0, 70) : `Clip ${index + 1} 🔥`,
+    hook: hook || titleCore,
+    pollQuestion: '',
+    pollOptions: [],
+    cta: '',
+    hashtags: tags,
     source: 'heuristic',
     index,
   };

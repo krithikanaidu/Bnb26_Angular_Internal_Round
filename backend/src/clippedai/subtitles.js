@@ -112,10 +112,13 @@ function assText(s) {
     .trim();
 }
 
-/** ClippedAI's original caption rule: yellow style on numbers/currency. */
+/** Caption rule: yellow highlight on numbers/currency actually spoken. Dynamic only — words come from the scrubbed transcript. */
 function classicLine(cue) {
   const text = cue.words
-    .map((w) => (isYellowWord(w) ? `{\\style Yellow}${w}` : w))
+    .map((w) => {
+      const safe = assText(w);
+      return isYellowWord(w) ? `{\\rYellow}${safe}{\\rDefault}` : safe;
+    })
     .join(' ');
   return `Dialogue: 0,${assTime(cue.start)},${assTime(cue.end)},Default,,0,0,0,,${text}`;
 }

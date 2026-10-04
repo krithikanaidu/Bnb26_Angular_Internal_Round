@@ -11,6 +11,8 @@
 // deterministic candidate generator that makes that ranking possible.
 'use strict';
 
+const { isFillerLoop } = require('./transcribe');
+
 const STOPWORDS = new Set(('a an the and or but if then than that this these those of in on at to for from by with without '
   + 'is are was were be been being am do does did doing have has had having i you he she it we they me him her us them '
   + 'my your his its our their as so not no nor too very can will just should now what which who whom when where why how '
@@ -231,7 +233,12 @@ function selectClips(transcript, { minLen, maxLen, maxClips }) {
 
   let windows = candidateWindows(words, segments, { minLen, maxLen })
     .map((w) => ({ ...w, start_time: clampEnd(w.start_time), end_time: clampEnd(w.end_time) }))
-    .filter((w) => w.end_time > w.start_time);
+    .filter((w) => w.end_time > w.start_time)
+    // Dynamic only: never propose a clip whose words are just a hallucinated
+    // filler loop (thank-you repeats from a silent gap), even if the rest of
+    // the video has real speech. Only filler vocabulary is rejected — genuinely
+    // repetitive real speech still passes.
+    .filter((w) => !isFillerLoop(wordsInRange(words, w.start_time, w.end_time)));
 
   // Nothing fits the budget: derive a window from the densest speech region so
   // short sources still yield something real instead of nothing.

@@ -96,6 +96,90 @@ function isDegenerateTranscript(words) {
   return null;
 }
 
+/**
+ * True when a word list is nothing but known Whisper filler vocabulary
+ * ("thank you", "thanks for watching", "like and subscribe", "bye", ...).
+ * Real speech — even repetitive real speech like chanting — always contains
+ * content words outside that set, so this only fires on hallucinated loops,
+ * never on something someone actually said.
+ */
+function isFillerLoop(words) {
+  const list = Array.isArray(words) ? words.filter((w) => w && w.word) : [];
+  if (list.length < 4) return false;
+  const fillerVocab = new Set();
+  for (const phrase of HALLUCINATION_PHRASES) {
+    for (const t of phrase.split(' ').map(normaliseToken)) {
+      if (t) fillerVocab.add(t);
+    }
+  }
+  const tokens = list.map((w) => normaliseToken(w.word)).filter(Boolean);
+  if (!tokens.length) return false;
+  return tokens.every((t) => fillerVocab.has(t));
+}
+
+/**
+ * Remove hallucinated filler loops from ONE clip's words — dynamic only.
+ *
+ * The whole-transcript check in isDegenerateTranscript() catches a fully-silent
+ * video, but a real video with silent/music gaps still gets local loops
+ * ("thank you thank you thank you", "bye bye bye") with valid-looking
+ * timestamps inside those gaps. buildCues() used to burn those verbatim, so
+ * every short from the same long video showed the SAME invented line even
+ * though it was never spoken. This collapses adjacent repeated 1–3 word
+ * blocks (keeping the first occurrence) and, when the clip holds nothing but
+ * filler vocabulary, returns [] so the caller renders NO captions instead of
+ * fake ones.
+ */
+function scrubHallucinatedWords(clipWords) {
+  const list = Array.isArray(clipWords) ? clipWords.filter((w) => w && w.word) : [];
+  if (!list.length) return [];
+  // Whole clip is just filler vocabulary (the silent-gap case): no real
+  // speech, so no captions — never a collapsed-down fake line.
+  if (isFillerLoop(list)) return [];
+  const norm = list.map((w) => normaliseToken(w.word));
+  const keep = new Array(list.length).fill(true);
+  const blockEqual = (a, b, n) => {
+    for (let k = 0; k < n; k += 1) {
+      if (norm[a + k] !== norm[b + k] || !norm[a + k]) return false;
+    }
+    return true;
+  };
+  for (let n = 1; n <= 3; n += 1) {
+    let i = 0;
+    while (i + n * 2 <= norm.length) {
+      if (blockEqual(i, i + n, n)) {
+        // Drop the repeat block (collapses runs of 3+ by re-scanning).
+        for (let j = i + n; j < i + n * 2; j += 1) keep[j] = false;
+        i += n;
+      } else {
+        i += 1;
+      }
+    }
+    // Compact norm/keep for the next n so multi-width runs fully collapse.
+    // (Rebuild index mapping by filtering dropped positions.)
+    const keptNorm = [];
+    const keptList = [];
+    const keptKeep = [];
+    for (let k = 0; k < norm.length; k += 1) {
+      if (keep[k]) { keptNorm.push(norm[k]); keptList.push(list[k]); keptKeep.push(true); }
+    }
+    norm.length = 0; norm.push(...keptNorm);
+    list.length = 0; list.push(...keptList);
+    keep.length = 0; keep.push(...keptKeep);
+  }
+  const collapsed = list;
+  if (isFillerLoop(collapsed)) return [];
+  return collapsed;
+}
+
+/** Words spoken inside [start, end], minus hallucinated filler loops. */
+function scrubRange(words, start, end) {
+  const inClip = (Array.isArray(words) ? words : []).filter(
+    (w) => w && w.word && Number.isFinite(w.start) && Number.isFinite(w.end) && w.start >= start && w.end <= end,
+  );
+  return scrubHallucinatedWords(inClip);
+}
+
 /** Actionable message for every way a transcript can turn out to be unusable. */
 function noSpeechMessage(reason, detail) {
   if (reason === 'no-audio-stream') {
@@ -340,5 +424,5 @@ async function transcribe(filePath, jobDir, onProgress) {
 }
 
 module.exports = {
-  transcribe, shapeResponse, isDegenerateTranscript, noSpeechMessage, CHUNK_SEC,
+  transcribe, shapeResponse, isDegenerateTranscript, isFillerLoop, scrubHallucinatedWords, scrubRange, noSpeechMessage, CHUNK_SEC,
 };

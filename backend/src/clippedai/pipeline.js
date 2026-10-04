@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { FFMPEG, run, assFilterWithFonts, assFilterPath, probeDuration, probeAudio } = require('./ffmpeg');
 const { buildCues, buildAss } = require('./subtitles');
+const { scrubRange } = require('./transcribe');
 const { planReframe } = require('./reframe');
 const { viralTitle, safeFilename } = require('./titles');
 
@@ -100,20 +101,30 @@ async function renderOne({
     throw new Error(`Clip range ${start}-${end}s is outside the source video (${srcDuration?.toFixed?.(1) || '?'}s).`);
   }
 
-  const text = clipText(words, safeStart, safeEnd);
+  // Dynamic only: captions come strictly from words actually spoken inside
+  // this clip's range, minus hallucinated filler loops (thank-you repeats).
+  // When nothing real was said there, render with NO captions rather than
+  // burning invented text.
+  const cleanWords = scrubRange(words, safeStart, safeEnd);
+  const text = cleanWords.map((w) => w.word).join(' ');
+  let effSubs = withSubs && cleanWords.length > 0;
 
   let assPath = null;
-  if (withSubs) {
-    const cues = buildCues(words, safeStart, safeEnd);
-    const overlays = {
-      hook: overrides.hook ?? options.hook ?? null,
-      poll: overrides.poll ?? options.poll ?? null,
-      pollOptions: overrides.pollOptions ?? options.pollOptions ?? null,
-      cta: overrides.cta ?? options.cta ?? null,
-      hashtags: overrides.hashtags ?? options.hashtags ?? null,
-    };
-    assPath = path.join(jobDir, `clip_${n}.ass`);
-    fs.writeFileSync(assPath, buildAss(cues, { style: captionStyle, overlays }), 'utf8');
+  if (effSubs) {
+    const cues = buildCues(cleanWords, safeStart, safeEnd);
+    if (!cues.length) {
+      effSubs = false;
+    } else {
+      const overlays = {
+        hook: null,
+        poll: null,
+        pollOptions: null,
+        cta: null,
+        hashtags: null,
+      };
+      assPath = path.join(jobDir, `clip_${n}.ass`);
+      fs.writeFileSync(assPath, buildAss(cues, { style: captionStyle, overlays }), 'utf8');
+    }
   }
 
   // Dynamic reframe (falls back to a centred crop when it can't plan).
@@ -131,7 +142,7 @@ async function renderOne({
     end: safeEnd,
     assPath,
     outputPath: tmpPath,
-    withSubs,
+    withSubs: effSubs,
     portrait,
     reframe,
   });
