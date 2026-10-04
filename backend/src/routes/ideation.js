@@ -18,21 +18,37 @@ router.get(['/hook-patterns', '/patterns'], async (req, res) => {
   }
 });
 
-// POST /api/content/hooks/generate → { engine, hooks:[{id,text,category,score,pattern_id}] }
+// POST /api/content/hooks/generate → { engine, hooks:[{id,text,category,score,pattern_id}], trends, regionInterest, personalization }
 router.post('/hooks/generate', async (req, res) => {
   try {
     const { project_id: projectId, topic, tone = 'punchy', count = 8, niche } = req.body;
+    const geo = req.body.geo || req.body.region || undefined;
     if (!topic || !String(topic).trim()) {
       return res.status(400).json({ error: 'Topic is required to generate hooks.' });
     }
     const cleanTopic = String(topic).trim();
     const countNum = Math.min(12, Math.max(3, Number(count) || 8));
 
-    const { engine, hooks, patterns } = await ideation.generateHooks({
+    // Trend-aware + personalized, token-bounded (top-8 trends, ≤200-token styleCard).
+    let trendsScored = [], regionInterest = null, styleCard = '';
+    try {
+      const trendsSvc = require('../services/trends.service');
+      const t = await trendsSvc.analyzeTrends({ topic: cleanTopic, niche: niche || '', geo: geo || 'IN' });
+      trendsScored = t.trendsScored || [];
+      regionInterest = t.regionInterest || null;
+    } catch (e) { console.warn('[ideation] trends context failed:', e.message); }
+    try {
+      styleCard = await require('../services/analytics.service').styleCardFor({ projectId, niche: niche || '', defaultTone: tone });
+    } catch (e) { console.warn('[ideation] styleCard failed:', e.message); }
+
+    const { engine, hooks, patterns, route } = await ideation.generateHooks({
       topic: cleanTopic,
       tone,
       count: countNum,
       niche,
+      trends: trendsScored,
+      styleCard,
+      geo,
     });
 
     const saved = [];
@@ -67,8 +83,12 @@ router.post('/hooks/generate', async (req, res) => {
 
     res.json({
       engine,
+      route: route || undefined,
       patterns: patterns || [],
       hooks: saved,
+      trends: trendsScored.slice(0, 5),
+      regionInterest,
+      personalization: styleCard ? { styleCard } : null,
     });
   } catch (err) {
     console.error('[ideation] hooks/generate error:', err);
@@ -80,6 +100,7 @@ router.post('/hooks/generate', async (req, res) => {
 router.post('/scripts/generate', async (req, res) => {
   try {
     const { project_id: projectId, hook_id: hookId, topic, tone = 'punchy', length_sec: lengthSec = 60, platforms } = req.body;
+    const geo = req.body.geo || req.body.region || undefined;
     let hookText = req.body.hook || '';
     let hookPatternId = null;
 
@@ -116,12 +137,26 @@ router.post('/scripts/generate', async (req, res) => {
 
     const effectiveHook = hookText || `Here is why ${subject} matters right now.`;
 
-    const { engine, content, beats, supporting } = await ideation.generateScript({
+    let trendsScored = [], regionInterest = null, styleCard = '';
+    try {
+      const trendsSvc = require('../services/trends.service');
+      const t = await trendsSvc.analyzeTrends({ topic: subject, niche: '', geo: geo || 'IN' });
+      trendsScored = t.trendsScored || [];
+      regionInterest = t.regionInterest || null;
+    } catch (e) { console.warn('[ideation] script trends context failed:', e.message); }
+    try {
+      styleCard = await require('../services/analytics.service').styleCardFor({ projectId, niche: '', defaultTone: tone });
+    } catch (e) { console.warn('[ideation] script styleCard failed:', e.message); }
+
+    const { engine, content, beats, supporting, route } = await ideation.generateScript({
       hook: effectiveHook,
       topic: subject,
       tone,
       lengthSec: Number(lengthSec) || 60,
       platforms: platforms || 'tiktok,reels,shorts',
+      trends: trendsScored,
+      styleCard,
+      geo,
     });
 
     let scriptRow;
@@ -156,11 +191,15 @@ router.post('/scripts/generate', async (req, res) => {
       id: scriptRow ? scriptRow.id : `script-${Date.now()}`,
       title: `${subject} script`,
       engine,
+      route: route || undefined,
       content,
       body: content,
       beats,
       supporting,
       version: scriptRow ? scriptRow.version : 1,
+      trends: trendsScored.slice(0, 5),
+      regionInterest,
+      personalization: styleCard ? { styleCard } : null,
     });
   } catch (err) {
     console.error('[ideation] scripts/generate error:', err);
@@ -169,6 +208,10 @@ router.post('/scripts/generate', async (req, res) => {
 });
 
 // GET /api/content/scripts?projectId= | ?project_id=
+// Never 500s on a stale table shape: if the `scripts` table predates the
+// ideation columns, the boot ensure normally adds them — but if that DDL was
+// skipped (permissions, wrong DB), fall back to the base columns padded with
+// defaults so Saved Scripts / Studio / history still render.
 router.get('/scripts', async (req, res) => {
   try {
     const id = req.query.project_id || req.query.projectId;
@@ -178,6 +221,17 @@ router.get('/scripts', async (req, res) => {
     });
     res.json(rows || []);
   } catch (err) {
+    const { isMissingColumnError, listScriptsResilient } = require('../config/ideationSchema');
+    if (isMissingColumnError(err)) {
+      try {
+        const id = req.query.project_id || req.query.projectId;
+        const rows = await listScriptsResilient({ projectId: id || undefined });
+        console.warn('[ideation] get scripts served via base-column fallback — restart the backend to let the schema ensure add the missing columns.');
+        return res.json(rows);
+      } catch (fallbackErr) {
+        console.error('[ideation] get scripts fallback error:', fallbackErr);
+      }
+    }
     console.error('[ideation] get scripts error:', err);
     res.status(500).json({ error: errMessage(err) });
   }
@@ -224,7 +278,8 @@ router.post('/scripts/:id/beats', async (req, res) => {
       text: line.replace(/^[A-Z0-9\s()–-]+:\s*/i, '').trim() || line.trim(),
       importance: idx === 0 ? 1.0 : idx === lines.length - 1 ? 0.8 : 0.7,
     }));
-    await s.update({ beats, version: s.version + 1 });
+    // s.version can be null on rows written before the column default existed.
+    await s.update({ beats, version: (Number(s.version) || 1) + 1 });
     res.json({ id: s.id, beats, version: s.version });
   } catch (err) {
     console.error('[ideation] beats error:', err);

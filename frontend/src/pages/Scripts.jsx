@@ -36,16 +36,19 @@ export default function Scripts() {
 
   const load = async () => {
     setLoading(true);
-    try {
-      const [p, s] = await Promise.all([api.get('/projects'), api.get('/content/scripts')]);
-      setProjects(p.data);
-      setScripts(s.data);
+    // Fetch independently: one Promise.all used to mean a failing scripts
+    // call also discarded the projects list (and vice versa).
+    const results = await Promise.allSettled([api.get('/projects'), api.get('/content/scripts')]);
+    const [p, s] = results;
+    if (p.status === 'fulfilled') setProjects(p.value.data);
+    if (s.status === 'fulfilled') setScripts(s.value.data);
+    const firstError = [p, s].find((r) => r.status === 'rejected');
+    if (firstError) {
+      setError(firstError.reason?.response?.data?.error || 'Could not load scripts. Is the backend running?');
+    } else {
       setError(null);
-    } catch (e) {
-      setError(e.response?.data?.error || 'Could not load scripts. Is the backend running?');
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   };
   useEffect(() => {
     load();

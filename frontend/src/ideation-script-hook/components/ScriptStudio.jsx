@@ -58,16 +58,23 @@ export default function ScriptStudio({
 
   const save = async ({ title, content }) => {
     if (!script?.id) return;
-    const { data } = await ideationApi.patchScript(script.id, { title, content });
-    onScript?.({
-      ...script,
-      title: data.title || title,
-      body: data.body || data.content || content,
-      content: data.body || data.content || content,
-      beats: Array.isArray(data.beats) ? data.beats : script.beats,
-      supporting: data.supporting || script.supporting,
-      version: Number(data.version) || (script.version + 1),
-    });
+    // A failed PATCH used to be an unhandled rejection (silent stuck save).
+    // Surface it in the studio error banner instead.
+    try {
+      const { data } = await ideationApi.patchScript(script.id, { title, content });
+      onScript?.({
+        ...script,
+        title: data.title || title,
+        body: data.body || data.content || content,
+        content: data.body || data.content || content,
+        beats: Array.isArray(data.beats) ? data.beats : script.beats,
+        supporting: data.supporting || script.supporting,
+        version: Number(data.version) || (script.version + 1),
+      });
+      setErr(null);
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Could not save the script. Is the backend running?');
+    }
   };
 
   const copyToClipboard = (text, fieldName) => {

@@ -136,6 +136,7 @@ const Metric = define('Metric', {
   projectId: DataTypes.UUID,
   clipId: DataTypes.UUID,
   platform: DataTypes.STRING,
+  region: DataTypes.STRING, // ROI: YouTube regionCode / creator geo (IN, US, GB…)
   views: { type: DataTypes.INTEGER, defaultValue: 0 },
   likes: { type: DataTypes.INTEGER, defaultValue: 0 },
   comments: { type: DataTypes.INTEGER, defaultValue: 0 },
@@ -158,6 +159,21 @@ const ConnectedAccount = define('ConnectedAccount', {
   refreshToken: DataTypes.TEXT,
   expiresAt: DataTypes.DATE,
   meta: { type: DataTypes.JSONB, defaultValue: {} },
+});
+
+// Creator feedback loop: explicit (thumbs/accept/reject) + implicit (edits,
+// regenerates). Powers styleCard personalization and growth recommendations.
+// kind: accept|reject|edit|regenerate|up|down ; score: +1/-1 or 0..1.
+const Feedback = define('Feedback', {
+  projectId: DataTypes.UUID,
+  clipId: DataTypes.UUID,
+  variantId: DataTypes.UUID,
+  hookId: DataTypes.UUID,
+  scriptId: DataTypes.UUID,
+  kind: { type: DataTypes.STRING, defaultValue: 'up' },
+  score: { type: DataTypes.FLOAT, defaultValue: 1 },
+  region: DataTypes.STRING,
+  payload: { type: DataTypes.JSONB, defaultValue: {} },
 });
 
 // Account behind a signed-in session (AGENT/FEATURES.md F1.1).
@@ -187,5 +203,5 @@ PlatformVariant.belongsTo(Clip, { foreignKey: 'clip_id' });
 
 module.exports = {
   sequelize, Project, Asset, Script, Hook, HookPattern, TranscriptSegment, Clip,
-  EditProject, PublishJob, PlatformVariant, Metric, ClipJob, User, ConnectedAccount,
+  EditProject, PublishJob, PlatformVariant, Metric, Feedback, ClipJob, User, ConnectedAccount,
 };

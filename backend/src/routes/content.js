@@ -6,102 +6,166 @@ const { adaptMany, validateVariant, readEdl, PRESETS, DEFAULT_PLATFORMS } = requ
 const { getTagsForTopic } = require('../services/trends.service');
 const { fetchVideoStats } = require('../services/youtube.service');
 
+// Every handler below try/catches: a bare `await` that throws inside an
+// Express 4 async handler never reaches error middleware — it becomes an
+// unhandled rejection that hangs the request (and on older boot code killed
+// the whole process). Studio fires several of these in parallel, so one
+// throw used to blank the entire page.
+const errMessage = (e) => (e && e.message) || 'Unknown server error';
+
 // --- Scripts & hooks ---
 router.post('/generate-hooks', async (req, res) => {
-  const { topic, count = 5, scriptId, projectId } = req.body;
-  const hooks = await generateHooks(topic, count);
-  if (scriptId || projectId) {
-    for (const h of hooks) await Hook.create({ scriptId: scriptId || null, projectId: projectId || null, text: h.text, style: h.style, score: h.score });
+  try {
+    const { topic, count = 5, scriptId, projectId } = req.body;
+    const hooks = await generateHooks(topic, count);
+    if (scriptId || projectId) {
+      for (const h of hooks) await Hook.create({ scriptId: scriptId || null, projectId: projectId || null, text: h.text, style: h.style, score: h.score });
+    }
+    res.json(hooks);
+  } catch (e) {
+    console.error('[content] generate-hooks error:', e);
+    res.status(500).json({ error: errMessage(e) });
   }
-  res.json(hooks);
 });
 
 router.post('/generate-script', async (req, res) => {
-  const { topic, tone = 'energetic', platforms = ['tiktok'], projectId, title } = req.body;
-  const body = await generateScript(topic, tone, platforms.join(','));
-  const script = await Script.create({ projectId: projectId || null, title: title || `${topic} script`, body: typeof body === 'string' ? body : body.body, tone, targetPlatforms: platforms });
-  res.status(201).json(script);
+  try {
+    const { topic, tone = 'energetic', platforms = ['tiktok'], projectId, title } = req.body;
+    const body = await generateScript(topic, tone, platforms.join(','));
+    const script = await Script.create({ projectId: projectId || null, title: title || `${topic} script`, body: typeof body === 'string' ? body : body.body, tone, targetPlatforms: platforms });
+    res.status(201).json(script);
+  } catch (e) {
+    console.error('[content] generate-script error:', e);
+    res.status(500).json({ error: errMessage(e) });
+  }
 });
 
 router.get('/scripts', async (req, res) => {
-  const where = req.query.projectId ? { projectId: req.query.projectId } : {};
-  res.json(await Script.findAll({ where, order: [['createdAt', 'DESC']] }));
+  try {
+    const where = req.query.projectId || req.query.project_id ? { projectId: req.query.projectId || req.query.project_id } : {};
+    res.json(await Script.findAll({ where, order: [['createdAt', 'DESC']] }));
+  } catch (e) {
+    // Same stale-table fallback as the ideation router (this legacy handler
+    // answers the same Studio/Scripts calls when mounted second).
+    const { isMissingColumnError, listScriptsResilient } = require('../config/ideationSchema');
+    if (isMissingColumnError(e)) {
+      try {
+        const pid = req.query.projectId || req.query.project_id || undefined;
+        console.warn('[content] get scripts served via base-column fallback.');
+        return res.json(await listScriptsResilient({ projectId: pid }));
+      } catch (fallbackErr) {
+        console.error('[content] get scripts fallback error:', fallbackErr);
+      }
+    }
+    console.error('[content] get scripts error:', e);
+    res.status(500).json({ error: errMessage(e) });
+  }
 });
 
 // --- Script-to-video understanding ---
 router.post('/align', async (req, res) => {
-  const { scriptBody, assetId, projectId } = req.body;
-  if (!String(scriptBody || '').trim()) {
-    return res.status(400).json({ error: 'scriptBody is required — load or write a script before aligning.' });
+  try {
+    const { scriptBody, assetId, projectId } = req.body;
+    if (!String(scriptBody || '').trim()) {
+      return res.status(400).json({ error: 'scriptBody is required — load or write a script before aligning.' });
+    }
+    const where = assetId ? { assetId } : projectId ? { projectId } : {};
+    const segments = await TranscriptSegment.findAll({ where, order: [['startSec', 'ASC']] });
+    if (!segments.length) return res.status(400).json({ error: 'No transcript segments for this asset. Upload footage and run transcription first (ClipAI or the Video Editor).' });
+    res.json({ alignment: alignScriptToTranscript(scriptBody, segments), segments });
+  } catch (e) {
+    console.error('[content] align error:', e);
+    res.status(500).json({ error: errMessage(e) });
   }
-  const where = assetId ? { assetId } : projectId ? { projectId } : {};
-  const segments = await TranscriptSegment.findAll({ where, order: [['startSec', 'ASC']] });
-  if (!segments.length) return res.status(400).json({ error: 'No transcript segments for this asset. Upload footage and run transcription first (ClipAI or the Video Editor).' });
-  res.json({ alignment: alignScriptToTranscript(scriptBody, segments), segments });
 });
 
 // --- Automated clip generation ---
 router.post('/clips/generate', async (req, res) => {
-  const { assetId, projectId } = req.body;
-  const where = assetId ? { assetId } : projectId ? { projectId } : {};
-  const segments = await TranscriptSegment.findAll({ where, order: [['startSec', 'ASC']] });
-  if (!segments.length) {
-    return res.status(400).json({ error: 'No transcript segments to generate from. Upload footage with speech and transcribe it first.' });
+  try {
+    const { assetId, projectId } = req.body;
+    const where = assetId ? { assetId } : projectId ? { projectId } : {};
+    const segments = await TranscriptSegment.findAll({ where, order: [['startSec', 'ASC']] });
+    if (!segments.length) {
+      return res.status(400).json({ error: 'No transcript segments to generate from. Upload footage with speech and transcribe it first.' });
+    }
+    const cands = generateClips(segments);
+    const saved = [];
+    for (const [i, c] of cands.entries()) {
+      saved.push(await Clip.create({ projectId: projectId || segments[0]?.projectId || null, assetId: assetId || segments[0]?.assetId || null, title: `Clip ${i + 1} — ${c.hookText.slice(0, 40)}`, startSec: c.startSec, endSec: c.endSec, viralityScore: c.viralityScore, hookText: c.hookText, captions: [{ t: c.startSec, text: c.hookText }] }));
+    }
+    res.status(201).json(saved);
+  } catch (e) {
+    console.error('[content] clips/generate error:', e);
+    res.status(500).json({ error: errMessage(e) });
   }
-  const cands = generateClips(segments);
-  const saved = [];
-  for (const [i, c] of cands.entries()) {
-    saved.push(await Clip.create({ projectId: projectId || segments[0]?.projectId || null, assetId: assetId || segments[0]?.assetId || null, title: `Clip ${i + 1} — ${c.hookText.slice(0, 40)}`, startSec: c.startSec, endSec: c.endSec, viralityScore: c.viralityScore, hookText: c.hookText, captions: [{ t: c.startSec, text: c.hookText }] }));
-  }
-  res.status(201).json(saved);
 });
 
 router.get('/clips', async (req, res) => {
-  const where = req.query.projectId ? { projectId: req.query.projectId } : {};
-  res.json(await Clip.findAll({ where, order: [['viralityScore', 'DESC']] }));
+  try {
+    const where = req.query.projectId ? { projectId: req.query.projectId } : {};
+    res.json(await Clip.findAll({ where, order: [['viralityScore', 'DESC']] }));
+  } catch (e) {
+    console.error('[content] get clips error:', e);
+    res.status(500).json({ error: errMessage(e) });
+  }
 });
 
 // --- AI-assisted editable edits (EDL stays editable) ---
 router.post('/edits', async (req, res) => {
-  const { projectId, clipId, platform = 'tiktok', tweaks = {} } = req.body;
-  if (!clipId) {
-    return res.status(400).json({ error: 'clipId is required — pick the clip this edit is for.' });
+  try {
+    const { projectId, clipId, platform = 'tiktok', tweaks = {} } = req.body;
+    if (!clipId) {
+      return res.status(400).json({ error: 'clipId is required — pick the clip this edit is for.' });
+    }
+    const clip = await Clip.findByPk(clipId);
+    if (!clip) return res.status(404).json({ error: 'clip not found' });
+    if (!PLATFORM_PRESETS[platform]) {
+      return res.status(400).json({ error: `platform must be one of: ${Object.keys(PLATFORM_PRESETS).join(', ')}` });
+    }
+    const edl = {
+      tracks: [{ type: 'video', cuts: [{ start: clip?.startSec ?? 0, end: clip?.endSec ?? 30, speed: 1.1 }] }],
+      captions: clip?.captions || [{ t: 0, text: clip?.hookText || 'Hook here' }],
+      overlays: [{ type: 'hookTitle', text: clip?.hookText || 'Hook', style: platform }],
+      hook: clip?.hookText || '',
+      // Empty until the creator writes one: adapt falls back to the platform
+      // preset default, so a hardcoded string here would never be honest.
+      cta: '',
+      ...tweaks,
+    };
+    const edit = await EditProject.create({ projectId: projectId || null, clipId, edl, platform, aspect: (PLATFORM_PRESETS[platform] || {}).aspect || '9:16' });
+    res.status(201).json(edit);
+  } catch (e) {
+    console.error('[content] create edit error:', e);
+    res.status(500).json({ error: errMessage(e) });
   }
-  const clip = await Clip.findByPk(clipId);
-  if (!clip) return res.status(404).json({ error: 'clip not found' });
-  if (!PLATFORM_PRESETS[platform]) {
-    return res.status(400).json({ error: `platform must be one of: ${Object.keys(PLATFORM_PRESETS).join(', ')}` });
-  }
-  const edl = {
-    tracks: [{ type: 'video', cuts: [{ start: clip?.startSec ?? 0, end: clip?.endSec ?? 30, speed: 1.1 }] }],
-    captions: clip?.captions || [{ t: 0, text: clip?.hookText || 'Hook here' }],
-    overlays: [{ type: 'hookTitle', text: clip?.hookText || 'Hook', style: platform }],
-    hook: clip?.hookText || '',
-    // Empty until the creator writes one: adapt falls back to the platform
-    // preset default, so a hardcoded string here would never be honest.
-    cta: '',
-    ...tweaks,
-  };
-  const edit = await EditProject.create({ projectId: projectId || null, clipId, edl, platform, aspect: (PLATFORM_PRESETS[platform] || {}).aspect || '9:16' });
-  res.status(201).json(edit);
 });
 router.get('/edits', async (req, res) => {
-  const where = req.query.projectId ? { projectId: req.query.projectId } : {};
-  res.json(await EditProject.findAll({ where, order: [['createdAt', 'DESC']] }));
+  try {
+    const where = req.query.projectId ? { projectId: req.query.projectId } : {};
+    res.json(await EditProject.findAll({ where, order: [['createdAt', 'DESC']] }));
+  } catch (e) {
+    console.error('[content] get edits error:', e);
+    res.status(500).json({ error: errMessage(e) });
+  }
 });
 router.patch('/edits/:id', async (req, res) => {
-  const e = await EditProject.findByPk(req.params.id);
-  if (!e) return res.status(404).json({ error: 'not found' });
-  const next = req.body.edl ?? e.edl;
-  // An EDL must stay an EDL: tracks/captions arrays are the contract the
-  // timeline, adapt and render all read. A bare {} would save fine and break
-  // the next read, so reject it with a message instead.
-  if (!next || typeof next !== 'object' || !Array.isArray(next.tracks) || !Array.isArray(next.captions)) {
-    return res.status(400).json({ error: 'edl must be an object with tracks[] and captions[] arrays.' });
+  try {
+    const e = await EditProject.findByPk(req.params.id);
+    if (!e) return res.status(404).json({ error: 'not found' });
+    const next = req.body.edl ?? e.edl;
+    // An EDL must stay an EDL: tracks/captions arrays are the contract the
+    // timeline, adapt and render all read. A bare {} would save fine and break
+    // the next read, so reject it with a message instead.
+    if (!next || typeof next !== 'object' || !Array.isArray(next.tracks) || !Array.isArray(next.captions)) {
+      return res.status(400).json({ error: 'edl must be an object with tracks[] and captions[] arrays.' });
+    }
+    const changed = JSON.stringify(next) !== JSON.stringify(e.edl);
+    await e.update({ edl: next, version: changed ? (Number(e.version) || 1) + 1 : e.version });
+    res.json(e);
+  } catch (err) {
+    console.error('[content] patch edit error:', err);
+    res.status(500).json({ error: errMessage(err) });
   }
-  const changed = JSON.stringify(next) !== JSON.stringify(e.edl);
-  await e.update({ edl: next, version: changed ? e.version + 1 : e.version });
-  res.json(e);
 });
 
 // --- Multi-platform adaptation (Domain 7: F7.1–F7.4) ---
@@ -139,14 +203,18 @@ router.post('/adapt', async (req, res) => {
     }
   } catch { /* meta optional */ }
 
-  // 3. Trend + niche tags from the internet (skipped when caller supplies tags)
+  // 3. Trend + ROI tags from the internet (skipped when caller supplies tags)
   let trendsMeta = { source: 'caller-supplied', tags: topicTags };
   if (!topicTags.length) {
     const subject = topic || clip.title || '';
     try {
-      const t = await getTagsForTopic({ topic: subject, niche, geo });
+      const { analyzeTrends } = require('../services/trends.service');
+      const t = await analyzeTrends({ topic: subject, niche, geo });
       topicTags = t.tags;
-      trendsMeta = { source: t.source, tags: t.tags, trends: t.trends };
+      trendsMeta = {
+        source: t.source, tags: t.tags, trends: t.trendsScored || t.trends,
+        regionInterest: t.regionInterest || null, geo: t.geo || geo,
+      };
     } catch (e) {
       console.warn('[adapt] trends failed, continuing tagless:', e.message);
     }
@@ -155,6 +223,7 @@ router.post('/adapt', async (req, res) => {
   const adapted = await adaptMany(clip, platforms, {
     baseTags, topicTags, cta,
     edlInfo, edlVersion: edit?.version ?? null, sourceW, sourceH,
+    regionInterest: trendsMeta.regionInterest || null, geo,
   });
   const saved = [];
   for (const v of adapted) {
@@ -167,11 +236,14 @@ router.post('/adapt', async (req, res) => {
   res.json({ engine: adapted[0]?.engine || 'heuristic', variants: saved, edl: edlMeta, trends: trendsMeta });
 });
 
-// GET /api/content/trends?topic=&niche=&geo= — live trend titles + suggested tags
+// GET /api/content/trends?topic=&niche=&geo=&regions=IN,US,GB — live trends +
+// scored ranking + ROI. Legacy fields (source, trends, tags) preserved.
 router.get('/trends', async (req, res) => {
   try {
-    const { topic = '', niche = '', geo = 'IN' } = req.query;
-    res.json(await getTagsForTopic({ topic, niche, geo }));
+    const { topic = '', niche = '', geo = 'IN', regions } = req.query;
+    const { analyzeTrends } = require('../services/trends.service');
+    const list = regions ? String(regions).split(/[^A-Za-z]+/).filter(Boolean) : undefined;
+    res.json(await analyzeTrends({ topic, niche, geo, regions: list }));
   } catch (e) {
     res.status(500).json({ error: e.message || 'trends unavailable' });
   }
@@ -327,70 +399,140 @@ router.delete('/publish/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-// --- Creator intelligence ---
-// Every field below is derived from real rows. Nothing here is invented: there is
-// no hardcoded "best hook style", no hardcoded posting window and no made-up
-// "scores 12% higher" claim, because none of those can be computed from the data
-// this app actually stores. When there is not enough real data the field is null
-// and the UI renders an empty state instead of a fabricated insight.
+// --- Creator intelligence (analytics + trends + ROI + growth loop) ---
+// Backwards-compatible: legacy fields (totals, topClips, productionPatterns,
+// series) are preserved; new blocks (platforms, regions/ROI, hookCategories,
+// trends, growth, personalization) are additive.
 router.get('/insights', async (req, res) => {
-  const clips = await Clip.findAll({ order: [['viralityScore', 'DESC']], limit: 20 });
-  const metrics = await Metric.findAll({ limit: 100, order: [['createdAt', 'DESC']] });
-  // No rows → null, not zeros: an empty account must not look like a dead one.
-  const totals = metrics.length
-    ? metrics.reduce((a, m) => ({ views: a.views + (m.views || 0), likes: a.likes + (m.likes || 0), comments: a.comments + (m.comments || 0), shares: a.shares + (m.shares || 0) }), { views: 0, likes: 0, comments: 0, shares: 0 })
-    : null;
+  try {
+    const analytics = require('../services/analytics.service');
+    const { projectId, project_id, platform, region, geo, days, topic, niche } = req.query;
+    const agg = await analytics.aggregateMetrics({
+      projectId: projectId || project_id || undefined,
+      platform: platform || undefined,
+      region: region || geo || undefined,
+      days: days ? Number(days) : 30,
+    });
+    const subject = topic || '';
+    let trendsScored = [], regionInterest = null, tags = [];
+    try {
+      const trendsSvc = require('../services/trends.service');
+      if (subject || region || geo) {
+        const t = await trendsSvc.analyzeTrends({ topic: subject, niche: niche || '', geo: region || geo || 'IN' });
+        trendsScored = t.trendsScored || [];
+        regionInterest = t.regionInterest || null;
+        tags = t.tags || [];
+      }
+    } catch (e) { console.warn('[insights] trends failed:', e.message); }
+    let growth = { recommendations: [], narrative: null, engine: 'heuristic' };
+    try {
+      growth = await analytics.growthRecommendations({ aggregate: agg, trends: trendsScored, regionInterest, topic: subject });
+    } catch (e) { console.warn('[insights] growth failed:', e.message); }
+    const bestPlatform = agg.platforms[0] ? { platform: agg.platforms[0].platform, views: agg.platforms[0].views } : null;
+    const suggestion = agg.clipCount
+      ? `Based on ${agg.clipCount} clip${agg.clipCount === 1 ? '' : 's'}: average length ${agg.avgClipLen}s`
+        + `${bestPlatform ? `, most views on ${bestPlatform.platform} (${bestPlatform.views.toLocaleString()})` : ''}`
+        + `${regionInterest?.topRegion ? `, top ROI: ${regionInterest.topRegion.label}` : ''}.`
+      : null;
+    res.json({
+      totals: agg.totals,
+      topClips: agg.topClips,
+      productionPatterns: {
+        avgClipLen: agg.avgClipLen,
+        clipCount: agg.clipCount,
+        metricCount: agg.metricCount,
+        bestPlatform,
+        bestHookStyle: agg.hookCategories[0] || null,
+        bestPostWindow: agg.bestHour,
+        suggestion,
+      },
+      // New growth blocks:
+      platforms: agg.platforms,
+      regions: agg.regions, // ROI from real performance
+      hookCategories: agg.hookCategories,
+      durations: agg.durations,
+      trends: trendsScored,
+      regionInterest, // ROI from live topic interest
+      tags,
+      growth,
+      sampleNote: agg.sampleNote,
+      series: [], // filled below for compat (metrics list)
+      _seriesNote: 'series omitted by default; pass ?series=1 (caps at 100 rows)',
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'insights unavailable' });
+  }
+});
 
-  const avgClipLen = clips.length
-    ? +(clips.reduce((a, c) => a + (c.endSec - c.startSec), 0) / clips.length).toFixed(1)
-    : null;
+// GET /api/content/analytics/summary?projectId=&platform=&region=&days=30 —
+// machine-readable aggregate for dashboards (same queries as the script).
+router.get('/analytics/summary', async (req, res) => {
+  try {
+    const analytics = require('../services/analytics.service');
+    const { projectId, project_id, platform, region, geo, days } = req.query;
+    res.json(await analytics.aggregateMetrics({
+      projectId: projectId || project_id || undefined,
+      platform: platform || undefined,
+      region: region || geo || undefined,
+      days: days ? Number(days) : 30,
+    }));
+  } catch (e) { res.status(500).json({ error: e.message || 'analytics unavailable' }); }
+});
 
-  // Best platform = the one with the most recorded views. Null until metrics exist.
-  const byPlatform = metrics.reduce((acc, m) => {
-    if (!m.platform) return acc;
-    acc[m.platform] = (acc[m.platform] || 0) + (m.views || 0);
-    return acc;
-  }, {});
-  const ranked = Object.entries(byPlatform).sort((a, b) => b[1] - a[1]);
-  const bestPlatform = ranked.length ? { platform: ranked[0][0], views: ranked[0][1] } : null;
+// GET /api/content/analytics/growth?topic=&niche=&projectId=&region= —
+// heuristic recs + 1 cheap LLM narrative (cascade, cached 1h).
+router.get('/analytics/growth', async (req, res) => {
+  try {
+    const analytics = require('../services/analytics.service');
+    const trendsSvc = require('../services/trends.service');
+    const { projectId, project_id, platform, region, geo, days, topic = '', niche = '' } = req.query;
+    const aggregate = await analytics.aggregateMetrics({
+      projectId: projectId || project_id || undefined,
+      platform: platform || undefined,
+      region: region || geo || undefined,
+      days: days ? Number(days) : 30,
+    });
+    const t = await trendsSvc.analyzeTrends({ topic, niche, geo: region || geo || 'IN' });
+    res.json({
+      ...(await analytics.growthRecommendations({ aggregate, trends: t.trendsScored, regionInterest: t.regionInterest, topic })),
+      trends: t.trendsScored, regionInterest: t.regionInterest, tags: t.tags,
+    });
+  } catch (e) { res.status(500).json({ error: e.message || 'growth unavailable' }); }
+});
 
-  const suggestion = clips.length
-    ? `Based on ${clips.length} clip${clips.length === 1 ? '' : 's'}: average length ${avgClipLen}s`
-      + `${bestPlatform ? `, most views on ${bestPlatform.platform} (${bestPlatform.views.toLocaleString()})` : ''}.`
-    : null;
-
-  res.json({
-    totals,
-    topClips: clips.slice(0, 5),
-    productionPatterns: {
-      avgClipLen,
-      clipCount: clips.length,
-      metricCount: metrics.length,
-      bestPlatform,
-      // Retained as explicit nulls so clients can tell "not measured" from "zero".
-      bestHookStyle: null,
-      bestPostWindow: null,
-      suggestion,
-    },
-    series: metrics.map((m) => ({
-      platform: m.platform, views: m.views, likes: m.likes, comments: m.comments,
-      shares: m.shares, retentionPct: m.retentionPct, clipId: m.clipId,
-      source: m.source, createdAt: m.createdAt,
-    })),
-  });
+// POST /api/content/feedback — creator feedback loop signal.
+// Body: { projectId?, clipId?, variantId?, hookId?, scriptId?, kind: accept|reject|edit|regenerate|up|down, score?, region?, payload? }
+router.post('/feedback', async (req, res) => {
+  try {
+    const analytics = require('../services/analytics.service');
+    const row = await analytics.recordFeedback({
+      projectId: req.body.projectId || req.body.project_id,
+      clipId: req.body.clipId || req.body.clip_id,
+      variantId: req.body.variantId || req.body.variant_id,
+      hookId: req.body.hookId || req.body.hook_id,
+      scriptId: req.body.scriptId || req.body.script_id,
+      kind: req.body.kind || 'up',
+      score: req.body.score,
+      region: req.body.region || req.body.geo,
+      payload: req.body.payload || { note: req.body.note },
+    });
+    res.status(201).json({ ok: true, id: row.id, kind: row.kind, score: row.score });
+  } catch (e) { res.status(500).json({ error: e.message || 'feedback unavailable' }); }
 });
 
 // POST /content/metrics — record real numbers for a post (manual bridge until
 // each platform has an importer). Body: { platform*, views, likes, comments,
-// shares, retentionPct, clipId?, projectId?, source='manual', externalId? }
+// shares, retentionPct, clipId?, projectId?, region? (IN/US/GB…), source='manual', externalId? }
 router.post('/metrics', async (req, res) => {
-  const { platform, views, likes, comments, shares, retentionPct, clipId, projectId, source = 'manual', externalId } = req.body || {};
+  const { platform, views, likes, comments, shares, retentionPct, clipId, projectId, region, geo, source = 'manual', externalId } = req.body || {};
   if (!platform || !PRESETS[platform]) {
     return res.status(400).json({ error: `platform must be one of: ${Object.keys(PRESETS).join(', ')}` });
   }
+  const { normalizeRegion } = require('../services/geo.service');
   const num = (v) => (v == null || v === '' ? 0 : Math.max(0, Number(v) || 0));
   const row = await Metric.create({
     platform,
+    region: region || geo ? normalizeRegion(region || geo) : null,
     views: num(views), likes: num(likes), comments: num(comments),
     shares: num(shares), retentionPct: num(retentionPct),
     clipId: clipId || null, projectId: projectId || null,

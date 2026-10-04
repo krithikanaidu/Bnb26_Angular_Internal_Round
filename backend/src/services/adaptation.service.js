@@ -70,14 +70,18 @@ async function rewriteCaptionsBatch({ hookText, title, cta }, platforms) {
     return [p, truncateWords(base, preset.caption.max_chars)];
   }));
   const { chatJson } = require('./llmProvider');
+  const { clean } = require('../llm/preprocess');
+  const hook = clean(hookText, 200);
+  const cleanTitle = clean(title, 120);
+  const ctaText = clean(cta, 40);
   const brief = platforms.map((p) => {
     const pr = PRESETS[p];
-    return `- ${p}: tone "${pr.tone}", max ${pr.caption.max_chars} chars`;
-  }).join('\n');
+    return `${p}:${pr.tone}<=${pr.caption.max_chars}ch`;
+  }).join('|');
   const { engine, data } = await chatJson({
-    system: 'You write short-form video post captions. Return JSON only.',
-    user: `Hook: "${hookText}"\nVideo title: "${title}"\nCTA: "${cta}"\nRewrite one post caption per platform below. Plain text, no hashtags (hashtags are handled separately).\n${brief}\nReturn {"captions":{"${platforms[0]}":"..."}} with a key for every platform: ${platforms.join(', ')}.`,
-    temperature: 0.7, json: true,
+    system: 'Caption writer. JSON only. No preamble. No hashtags.',
+    user: `H:"${hook}"|T:"${cleanTitle}"|CTA:"${ctaText}"|${brief}|JSON {"captions":{"${platforms[0]}":"..."}} all: ${platforms.join(',')}.`,
+    temperature: 0.4, json: true, task: 'adapt',
   });
   if (!data || typeof data.captions !== 'object') return { engine: 'heuristic', captions: fallback() };
   const captions = {};
@@ -196,12 +200,15 @@ async function adaptMany(clip, platforms, opts = {}) {
     actions.push(`Reframe ${reframe.source} → ${preset.aspect} (${reframe.focus} crop: ${reframe.ffmpeg})`);
     actions.push(`Caption in ${preset.tone} tone, style ${captionStyle}`);
     if (edl.captionCount) actions.push(`Carries ${edl.captionCount} timed captions from EDL v${opts.edlVersion ?? '?'} (repositioned to safe zone)`);
+    const topRegion = opts.regionInterest?.topRegion;
+    const regionNote = topRegion ? `ROI: top interest ${topRegion.label || topRegion.region}${topRegion.share != null ? ` (${Math.round(topRegion.share * 100)}% share)` : ''} — lead hashtags there` : null;
+    if (regionNote) actions.push(regionNote);
     return {
       clip_id: clip.id, platform, aspect: preset.aspect,
       duration: duration == null ? null : +duration.toFixed(1),
       title, caption, hashtags, cta, captionStyle, reframe,
       edlVersion: opts.edlVersion ?? null,
-      warnings, actions,
+      warnings, actions, regionNote,
       status: warnings.some((w) => ['DURATION_OVER', 'CAPTION_OVER', 'DURATION_UNKNOWN', 'CAPTION_EMPTY'].includes(w.code)) ? 'needs_attention' : 'ready',
       engine,
     };

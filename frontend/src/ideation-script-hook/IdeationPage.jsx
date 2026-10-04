@@ -27,6 +27,7 @@ export default function IdeationPage() {
   const [activeStage, setActiveStage] = useState('idea');
   const [reachedStage, setReachedStage] = useState(1);
   const [loadError, setLoadError] = useState(null);
+  const [savedError, setSavedError] = useState(null);
   const [patternHint, setPatternHint] = useState(null);
 
   // Load projects safely
@@ -47,13 +48,18 @@ export default function IdeationPage() {
     return () => { active = false; };
   }, []);
 
-  // Load saved scripts for the project / workspace
+  // Load saved scripts for the project / workspace. A failure used to be
+  // swallowed silently (empty history, no explanation); surface it instead.
   const loadSavedScripts = (projId) => {
     ideationApi.listScripts(projId || undefined)
       .then((r) => {
         setSavedScripts(Array.isArray(r?.data) ? r.data : []);
+        setSavedError(null);
       })
-      .catch(() => setSavedScripts([]));
+      .catch((e) => {
+        setSavedScripts([]);
+        setSavedError(e?.response?.data?.error || 'Could not load saved scripts — is the backend running?');
+      });
   };
 
   useEffect(() => {
@@ -216,6 +222,7 @@ export default function IdeationPage() {
       )}
 
       {/* Saved Scripts History Drawer/Section */}
+      {savedError && <ErrorNote className="mt-3">{savedError}</ErrorNote>}
       {savedScripts.length > 0 && (
         <section className="ia-history-section">
           <div className="card ia-history-card">

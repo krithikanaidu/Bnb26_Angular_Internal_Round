@@ -6,10 +6,10 @@
 const { chatJson, hasLlm } = require('./llm');
 
 // Keep the prompt small — long transcripts blow the context and slow every job.
-const CLIP_BUDGET_CHARS = 1200;
-const RANK_POOL = 14;
+const CLIP_BUDGET_CHARS = 400;
+const RANK_POOL = 8;
 
-const clipText = (c) => String(c.text || '').replace(/\s+/g, ' ').slice(0, CLIP_BUDGET_CHARS);
+const clipText = (c) => String(c.text || '').replace(/\s+/g, ' ').trim().slice(0, CLIP_BUDGET_CHARS);
 
 /**
  * Ask the model to re-rank the deterministic candidates.
@@ -20,30 +20,23 @@ async function rankMoments(candidates, count) {
   if (!hasLlm() || !candidates.length) return null;
   const pool = candidates.slice(0, RANK_POOL).map((c, i) => ({
     id: i,
-    start: +c.start_time.toFixed(1),
-    end: +c.end_time.toFixed(1),
-    duration: +(c.end_time - c.start_time).toFixed(1),
-    score: c.score,
-    transcript: clipText(c),
+    s: +c.start_time.toFixed(1),
+    e: +c.end_time.toFixed(1),
+    d: +(c.end_time - c.start_time).toFixed(1),
+    sc: c.score,
+    txt: clipText(c),
   }));
 
   const data = await chatJson([
     {
       role: 'system',
-      content: 'You are a short-form video editor who decides which moments of a long video become viral Shorts. '
-        + 'You favour: a strong hook in the first seconds, one clear idea that stands alone without context, '
-        + 'emotional or surprising content, concrete numbers, and a satisfying payoff. '
-        + 'Reject rambling, housekeeping, repetition, and anything that starts or ends mid-thought. '
-        + 'Reply with JSON only.',
+      content: 'Shorts editor. Pick viral moments. JSON only. No preamble.',
     },
     {
       role: 'user',
-      content: `Here are candidate moments from one video:\n${JSON.stringify(pool)}\n\n`
-        + `Choose the best ${count} for separate Shorts. They must not overlap much. `
-        + 'Return JSON: {"picks":[{"id":0,"reason":"why this works in under 12 words"}]} '
-        + 'List ids in descending order of strength and include exactly the number you asked for when enough good options exist.',
+      content: `${JSON.stringify(pool)}\nPick best ${count}, non-overlapping. JSON {"picks":[{"id":0,"reason":"<=12 words"}]} desc.`,
     },
-  ], { maxTokens: 600 });
+  ], { maxTokens: 300, temperature: 0.2, task: 'rank' });
 
   const picks = Array.isArray(data?.picks) ? data.picks : null;
   if (!picks || !picks.length) return null;
@@ -105,23 +98,15 @@ async function writeClipCopy({ text, duration = 0, index = 0, titleHint = '' }) 
   const data = await chatJson([
     {
       role: 'system',
-      content: 'You write packaging for short vertical videos that must stop the scroll. '
-        + 'Be specific to the transcript — never invent facts that were not said. '
-        + 'Reply with JSON only.',
+      content: 'Shorts copywriter. Grounded in transcript only. JSON only. No preamble.',
     },
     {
       role: 'user',
-      content: `Transcript of a ${Math.round(duration)}s short:\n"""\n${clipText({ text })}\n"""\n\n`
-        + (titleHint ? `Draft title: ${titleHint}\n\n` : '')
-        + 'Return JSON with exactly these keys:\n'
-        + '  "title": viral title, max 7 words, MUST contain one emoji, no hashtags, no quotes\n'
-        + '  "hook": on-screen hook line, max 9 words, punchy, no emoji\n'
-        + '  "pollQuestion": one short question a viewer would answer, max 10 words\n'
-        + '  "pollOptions": exactly 2 very short answer options\n'
-        + '  "cta": short call to action, max 4 words\n'
-        + '  "hashtags": exactly 4 short relevant hashtags starting with #',
+      content: `"${clipText({ text })}"\n${Math.round(duration)}s${titleHint ? `|draft:${str(titleHint, 60)}` : ''}\n`
+        + 'JSON {"title":"<=7w +1 emoji, no #","hook":"<=9w, no emoji","pollQuestion":"<=10w","pollOptions":["",""],'
+        + '"cta":"<=4w","hashtags":["#","#","#","#"]}',
     },
-  ], { maxTokens: 500 });
+  ], { maxTokens: 250, temperature: 0.4, task: 'clipCopy' });
 
   if (!data) return fallbackCopy(text, index);
 
@@ -148,4 +133,10 @@ async function writeClipCopy({ text, duration = 0, index = 0, titleHint = '' }) 
   return out;
 }
 
-module.exports = { rankMoments, writeClipCopy, fallbackCopy };
+// Merged single-call packaging: title + hook + poll + CTA + hashtags.
+// Replaces separate viralTitle() + writeClipCopy() calls (saves ~1 call/clip).
+async function writeClipPackage(args) {
+  return writeClipCopy(args);
+}
+
+module.exports = { rankMoments, writeClipCopy, writeClipPackage, fallbackCopy };

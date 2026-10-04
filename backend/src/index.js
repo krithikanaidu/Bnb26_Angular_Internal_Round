@@ -27,12 +27,20 @@ process.on('uncaughtException', (err) => {
 // Rendered shorts + uploads served for preview/download
 app.use('/media', express.static(path.join(__dirname, '..', 'media')));
 
-app.get('/api/health', optionalAuth, (req, res) => {
+app.get('/api/health', optionalAuth, async (req, res) => {
   const { sttProvider, hasStt } = require('./clippedai/keys');
   const { resolveProvider } = require('./services/llmProvider');
   const { CLIPAI_SCORE_WEIGHTS } = require('./clippedai/score');
   const stt = sttProvider();
   const p = resolveProvider();
+  // Awaiting the count: it used to be embedded as a pending Promise, which
+  // serialised to `{}` and told the UI nothing about first-run state.
+  let accounts = null;
+  try {
+    accounts = await require('./models').User.count();
+  } catch {
+    accounts = null;
+  }
   res.json({
     ok: true,
     service: 'creatorai-backend',
@@ -57,7 +65,7 @@ app.get('/api/health', optionalAuth, (req, res) => {
     // Tells the marketing page whether this install has any accounts yet, so a
     // fresh database can say "create the first one" instead of pretending a
     // login form alone is enough.
-    accounts: require('./models').User.count().catch(() => null),
+    accounts,
     signedInAs: req.user ? { email: req.user.email, name: req.user.name } : null,
   });
 });
@@ -75,6 +83,21 @@ app.use('/api/content', requireAuth, require('./routes/ideation'));
 app.use('/api/content', requireAuth, require('./routes/content'));
 app.use('/api/clippedai', requireAuth, require('./routes/clippedai'));
 
+// Safety net: any error that escapes a route (sync throw, or an async throw
+// forwarded via next(err)) becomes a JSON 500 instead of a hung request or,
+// on older boot code, a dead process. Async handlers should still try/catch
+// locally so they can return specific messages — this is the backstop.
+app.use('/api', (err, _req, res, _next) => {
+  console.error('[api] unhandled route error:', err?.message || err);
+  if (res.headersSent) return;
+  const code = err?.parent?.code || err?.original?.code;
+  const hint =
+    code === '42703'
+      ? ' A database column is missing — restart the backend so the boot-time schema ensure can add it, and check DATABASE_URL points at the app database.'
+      : '';
+  res.status(500).json({ error: `${err?.message || 'Internal server error'}.${hint}` });
+});
+
 const PORT = process.env.PORT || 5000;
 (async () => {
   try {
@@ -88,6 +111,13 @@ const PORT = process.env.PORT || 5000;
     // Same guarantee for the content/publish/intelligence tables (accounts,
     // publish_jobs.account_id, metrics.source/external_id) — see config/contentSchema.js.
     await require('./config/contentSchema').ensureContentSchema();
+    // Same guarantee for the ideation tables (scripts.version/beats/
+    // supporting/hook_pattern_id, hooks.pattern_id/category, hook_patterns).
+    // Without this, every Script query throws 42703 `column "version" does
+    // not exist` on databases created before those columns existed — which
+    // empties Saved Scripts and the Studio script picker. See
+    // config/ideationSchema.js for the full explanation.
+    await require('./config/ideationSchema').ensureIdeationSchema();
     try {
       await sequelize.sync({ alter: true });
       console.log('[db] synced');
@@ -103,7 +133,6 @@ const PORT = process.env.PORT || 5000;
     // database that predates auth can still register its first account.
     await require('./config/authSchema').ensureAuthSchema();
     await ensureBucket().catch((e) => console.warn('[supabase]', e.message));
-    await require('./clippedai/schema').ensureClipAiSchema();
     await require('./clippedai/jobs').recoverStuckJobs();
     const server = app.listen(PORT, () => console.log(`CreatorAI backend on :${PORT}`));
     // A busy port used to surface as a bare "[uncaughtException] listen

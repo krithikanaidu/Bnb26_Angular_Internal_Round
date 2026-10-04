@@ -8,9 +8,16 @@
 // fallback, so adaptation never blocks on the network.
 // NOTE: Google Trends' public dailytrends endpoint was retired (404) — not used.
 const axios = require('axios');
+const { normalizeRegion, compareRegions, regionLabel } = require('./geo.service');
 
 const CACHE_TTL_MS = 6 * 3600 * 1000;
-const cache = new Map(); // key → { ts, data }
+const cache = new Map(); // key → { ts, data, seenAt }
+
+function touchSeen(key) {
+  const hit = cache.get(key);
+  if (hit && !hit.seenAt) { hit.seenAt = Date.now(); cache.set(key, hit); }
+  return hit ? hit.seenAt : Date.now();
+}
 
 const EVERGREEN = ['#contentcreator', '#viralvideo', '#growth', '#creatoreconomy', '#videoediting'];
 
@@ -62,7 +69,7 @@ async function fetchRedditTrends({ subs = ['popular'], perSub = 15 } = {}) {
     }
   }
   const out = { source: 'reddit-rss', trends };
-  cache.set(key, { ts: Date.now(), data: out });
+  cache.set(key, { ts: Date.now(), seenAt: touchSeen(key) || Date.now(), data: out });
   return { ...out, cached: false };
 }
 
@@ -75,32 +82,42 @@ async function fetchHackerNews({ limit = 12 } = {}) {
     params: { tags: 'front_page', hitsPerPage: limit }, timeout: 10000,
   });
   const out = { source: 'hackernews', trends: (data.hits || []).map((h) => ({ title: h.title || '', sub: 'hackernews' })) };
-  cache.set(key, { ts: Date.now(), data: out });
+  cache.set(key, { ts: Date.now(), seenAt: touchSeen(key) || Date.now(), data: out });
   return { ...out, cached: false };
 }
 
 // ---------- 2. Groq niche tags for the clip topic ----------
 async function fetchNicheTags({ topic = '', niche = '' }) {
+  const t = String(topic || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  const n = String(niche || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  if (!t && !n) return { engine: 'heuristic', tags: [] };
   const { chatJson } = require('./llmProvider');
   const { engine, data } = await chatJson({
-    system: 'You suggest social-media hashtags. Return JSON only.',
-    user: `Video topic: "${topic}". Niche/audience: "${niche}". Return {"tags":["#..."]} — 6 to 10 hashtags: half niche-specific (low competition), half broad reach. Lowercase, no spaces, no duplicates.`,
-    temperature: 0.6, json: true,
+    system: 'Hashtag suggester. JSON only. No preamble.',
+    user: `T:"${t}"|N:"${n}"|JSON {"tags":["#..."]} 6-10, half niche half broad, lowercase, no spaces.`,
+    temperature: 0.3, json: true, task: 'nicheTags',
   });
   const tags = Array.isArray(data?.tags) ? data.tags.filter((t) => typeof t === 'string').slice(0, 10) : [];
   return { engine, tags };
 }
 
 // ---------- 3. Optional YouTube mostPopular (needs YOUTUBE_API_KEY) ----------
+// Region-aware: cache key includes regionCode so ROI compare doesn't mix regions.
 async function fetchYoutubeTags({ region = 'IN', max = 10 } = {}) {
+  const code = normalizeRegion(region);
   const key = process.env.YOUTUBE_API_KEY;
-  if (!key) return { source: 'youtube', skipped: true, tags: [] };
+  if (!key) return { source: 'youtube', skipped: true, tags: [], region: code };
+  const ckey = `yt:${code}:${max}`;
+  const hit = cache.get(ckey);
+  if (hit && Date.now() - hit.ts < CACHE_TTL_MS) return { ...hit.data, cached: true, region: code };
   const { data } = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
-    params: { part: 'snippet', chart: 'mostPopular', regionCode: region, maxResults: Math.min(25, max * 3), key },
+    params: { part: 'snippet', chart: 'mostPopular', regionCode: code, maxResults: Math.min(25, max * 3), key },
     timeout: 10000,
   });
   const tags = [];
+  const titles = [];
   for (const item of data.items || []) {
+    if (item.snippet?.title) titles.push(item.snippet.title);
     for (const t of item.snippet?.tags || []) {
       const tag = slugTag(t);
       if (tag && !tags.includes(tag)) tags.push(tag);
@@ -108,7 +125,67 @@ async function fetchYoutubeTags({ region = 'IN', max = 10 } = {}) {
     }
     if (tags.length >= max) break;
   }
-  return { source: 'youtube', tags };
+  const out = { source: 'youtube', tags, titles: titles.slice(0, 10) };
+  cache.set(ckey, { ts: Date.now(), seenAt: touchSeen(ckey) || Date.now(), data: out });
+  return { ...out, cached: false, region: code };
+}
+
+// ---------- trend scoring: overlap + velocity + freshness ----------
+// velocity: how many sources mention the same normalized title words.
+// freshness: hours since first seen (cached seenAt); decays after 48h.
+function scoreTrends(trends = [], topic = '') {
+  const topicWords = new Set(String(topic || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter((w) => w.length > 3));
+  const now = Date.now();
+  const counts = {};
+  for (const t of trends) {
+    const k = String(t.title || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 60);
+    counts[k] = (counts[k] || 0) + 1;
+  }
+  return trends.map((t) => {
+    const words = String(t.title || '').toLowerCase().split(/[^a-z0-9]+/);
+    const overlap = words.filter((w) => topicWords.has(w)).length;
+    const k = String(t.title || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 60);
+    const velocity = counts[k] || 1;
+    const seenAt = t.seenAt || now;
+    const freshnessHrs = Math.max(0, (now - seenAt) / 3600000);
+    const freshness = freshnessHrs <= 48 ? 1 : Math.max(0.2, 1 - (freshnessHrs - 48) / 120);
+    const score = +(overlap * 0.5 + Math.min(velocity, 4) * 0.15 + freshness * 0.2 + (t.origin === 'youtube' ? 0.15 : 0)).toFixed(3);
+    return { ...t, overlap, velocity, freshnessHrs: +freshnessHrs.toFixed(1), freshness: +freshness.toFixed(2), score };
+  }).sort((a, b) => b.score - a.score);
+}
+
+// Region-Based Interest: per-region score = youtube tag/title overlap with the
+// topic, normalized to shares. No LLM — pure code, so it costs zero tokens.
+async function getRegionInterest({ topic = '', niche = '', regions } = {}) {
+  const list = (Array.isArray(regions) && regions.length ? regions : compareRegions()).map(normalizeRegion);
+  const topicWords = new Set(String(topic || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter((w) => w.length > 2));
+  const per = [];
+  for (const region of [...new Set(list)]) {
+    let tags = [], titles = [], ok = false;
+    try {
+      const yt = await fetchYoutubeTags({ region, max: 10 });
+      tags = yt.tags || []; titles = yt.titles || []; ok = !yt.skipped;
+    } catch { ok = false; }
+    const hay = [...tags, ...titles].join(' ').toLowerCase().split(/[^a-z0-9]+/);
+    const hits = hay.filter((w) => topicWords.has(w)).length;
+    per.push({ region, label: regionLabel(region), score: hits, tags: tags.slice(0, 5), live: ok });
+  }
+  const total = per.reduce((a, r) => a + r.score, 0) || 1;
+  const ranked = per.map((r) => ({ ...r, share: +(r.score / total).toFixed(3) })).sort((a, b) => b.score - a.score);
+  return { regions: ranked, topRegion: ranked[0] || null, topic: String(topic).slice(0, 120) };
+}
+
+// Full trend analysis for a topic: scored trends + tags + ROI.
+// Token-optimized: trends capped (top 8, 90ch each), nicheTags LLM cached 6h.
+async function analyzeTrends({ topic = '', niche = '', geo = 'IN', regions, maxTrends = 8 } = {}) {
+  const region = normalizeRegion(geo);
+  const base = await getTagsForTopic({ topic, niche, geo: region });
+  const scored = scoreTrends(base.trends || [], topic).slice(0, maxTrends);
+  let regionInterest;
+  try {
+    regionInterest = await getRegionInterest({ topic, niche, regions: regions || [region, ...compareRegions()] });
+  } catch { regionInterest = { regions: [], topRegion: null }; }
+  return { ...base, geo: region, trendsScored: scored, regionInterest };
 }
 
 // ---------- merged: tags for a topic ----------
@@ -164,4 +241,4 @@ async function getTagsForTopic({ topic = '', niche = '', geo = 'IN' } = {}) {
   return { source, trends: trends.slice(0, 10), tags };
 }
 
-module.exports = { fetchRedditTrends, fetchHackerNews, fetchNicheTags, fetchYoutubeTags, getTagsForTopic, subsFor };
+module.exports = { fetchRedditTrends, fetchHackerNews, fetchNicheTags, fetchYoutubeTags, getTagsForTopic, analyzeTrends, scoreTrends, getRegionInterest, subsFor };

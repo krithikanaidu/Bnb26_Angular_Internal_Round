@@ -37,10 +37,29 @@ alter table "Metrics" add column if not exists "external_id" text;
 -- (connected_accounts, publish_jobs, metrics), not the PascalCase names
 -- above. These statements match that reality so a fresh SQL-editor setup and
 -- the running app agree on the same tables.
+--
+-- CRITICAL: the same PascalCase/lowercase split applies to the ideation
+-- tables. The app reads lowercase `scripts`/`hooks`/`hook_patterns`, so a
+-- database created before the ideation columns existed fails every Script
+-- query with `column "version" does not exist` (Postgres 42703) — Saved
+-- Scripts, the Studio script picker and the Ideation history all go blank.
+-- The ALTERs below repair those live tables (the backend's boot-time
+-- ensure in src/config/ideationSchema.js does the same automatically).
 create table if not exists "connected_accounts" (id uuid primary key default gen_random_uuid(), provider text not null, handle text not null, display_name text, access_token text, refresh_token text, expires_at timestamptz, meta jsonb default '{}', created_at timestamptz default now(), updated_at timestamptz default now());
 alter table "publish_jobs" add column if not exists "account_id" uuid;
 alter table "metrics" add column if not exists "source" text default 'manual';
 alter table "metrics" add column if not exists "external_id" text;
+-- Ideation backfill for the LIVE lowercase tables (see note above).
+create table if not exists "hook_patterns" (id uuid primary key default gen_random_uuid(), pattern text not null, category text not null, example text, source text default 'viral-hooks', created_at timestamptz default now(), updated_at timestamptz default now());
+alter table "scripts" add column if not exists "target_platforms" jsonb default '[]';
+alter table "scripts" add column if not exists "version" int default 1;
+alter table "scripts" add column if not exists "hook_pattern_id" uuid;
+alter table "scripts" add column if not exists "beats" jsonb default '[]';
+alter table "scripts" add column if not exists "supporting" jsonb default '{}';
+alter table "hooks" add column if not exists "project_id" uuid;
+alter table "hooks" add column if not exists "script_id" uuid;
+alter table "hooks" add column if not exists "pattern_id" uuid;
+alter table "hooks" add column if not exists "category" text default 'statement';
 -- Storage bucket (or create via Dashboard > Storage):
 insert into storage.buckets (id, name, public) values ('creator-assets','creator-assets', true) on conflict (id) do nothing;
 

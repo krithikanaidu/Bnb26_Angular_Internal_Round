@@ -6,11 +6,8 @@
 const { chat, hasLlm } = require('./llm');
 
 const EXAMPLES = [
-  'She was almost dead 😵',
   'He made $1,000,000 in 1 hour 💸',
-  'This changed everything... 😲',
-  "They couldn't believe what happened! 😱",
-  'He risked it all for this 😬',
+  'She was almost dead 😵',
 ];
 
 function safeFilename(s) {
@@ -54,13 +51,14 @@ function heuristicTitle(clipText, index) {
 async function viralTitle(clipText, index = 0) {
   if (!hasLlm()) return heuristicTitle(clipText, index);
   try {
+    const text = String(clipText || '').replace(/\s+/g, ' ').trim().slice(0, 400);
     const { content } = await chat([{
+      role: 'system',
+      content: 'Shorts titles. <=7 words +1 emoji, no #. Output title only.',
+    }, {
       role: 'user',
-      content: 'Given the following transcript, generate a catchy, viral YouTube Shorts title (max 7 words). '
-        + 'ALWAYS include an emoji in the title. ONLY output the title, nothing else. Do NOT use hashtags. '
-        + 'Do NOT explain, do NOT repeat the prompt, do NOT add quotes. The title should be in the style of these examples: '
-        + `${EXAMPLES.join(', ')}.\n\nTranscript:\n${clipText}`,
-    }], { maxTokens: 200, temperature: 0.7 });
+      content: `e.g. ${EXAMPLES.join(' | ')}\n"${text}"`,
+    }], { maxTokens: 60, temperature: 0.5, task: 'title' });
     const title = firstLine(content);
     return title ? title.slice(0, 80) : heuristicTitle(clipText, index);
   } catch (e) {

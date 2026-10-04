@@ -29,21 +29,32 @@ export default function Studio() {
 
   const load = async (pid = projectId) => {
     setLoading(true);
-    try {
-      const [p, c, s] = await Promise.all([
-        api.get('/projects'),
-        api.get('/content/clips' + (pid ? `?projectId=${pid}` : '')),
-        api.get('/content/scripts' + (pid ? `?projectId=${pid}` : '')),
-      ]);
-      setProjects(p.data);
-      setClips(c.data);
-      setScripts(s.data);
-      setError(null);
-    } catch (e) {
-      setError(e.response?.data?.error || 'Could not load studio data. Is the backend running?');
-    } finally {
-      setLoading(false);
+    // Fetch independently: these used to be one Promise.all, so a single
+    // failing call (e.g. /clips 500ing on a stale table) blanked projects,
+    // clips AND scripts together and the script picker went empty.
+    const results = await Promise.allSettled([
+      api.get('/projects'),
+      api.get('/content/clips' + (pid ? `?projectId=${pid}` : '')),
+      api.get('/content/scripts' + (pid ? `?projectId=${pid}` : '')),
+    ]);
+    const [p, c, s] = results;
+    if (p.status === 'fulfilled') setProjects(p.value.data);
+    if (c.status === 'fulfilled') setClips(c.value.data);
+    if (s.status === 'fulfilled') {
+      setScripts(s.value.data);
+      // Keep the open editor in sync with the refreshed list.
+      if (scriptId) {
+        const fresh = (s.value.data || []).find((x) => x.id === scriptId);
+        if (fresh?.body && fresh.body !== scriptBody) setScriptBody(fresh.body);
+      }
     }
+    const firstError = [p, c, s].find((r) => r.status === 'rejected');
+    if (firstError) {
+      setError(firstError.reason?.response?.data?.error || 'Could not load studio data. Is the backend running?');
+    } else {
+      setError(null);
+    }
+    setLoading(false);
   };
   // Refilters whenever the project changes — the dropdown used to silently keep
   // showing the previous project's clips/scripts until Refresh was found.
