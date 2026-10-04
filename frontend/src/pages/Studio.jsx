@@ -24,15 +24,16 @@ export default function Studio() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [platform, setPlatform] = useState('tiktok');
   const toast = useToast();
 
-  const load = async () => {
+  const load = async (pid = projectId) => {
     setLoading(true);
     try {
       const [p, c, s] = await Promise.all([
         api.get('/projects'),
-        api.get('/content/clips' + (projectId ? `?projectId=${projectId}` : '')),
-        api.get('/content/scripts' + (projectId ? `?projectId=${projectId}` : '')),
+        api.get('/content/clips' + (pid ? `?projectId=${pid}` : '')),
+        api.get('/content/scripts' + (pid ? `?projectId=${pid}` : '')),
       ]);
       setProjects(p.data);
       setClips(c.data);
@@ -44,9 +45,12 @@ export default function Studio() {
       setLoading(false);
     }
   };
+  // Refilters whenever the project changes — the dropdown used to silently keep
+  // showing the previous project's clips/scripts until Refresh was found.
   useEffect(() => {
-    load();
-  }, []);
+    load(projectId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   // Pull the real saved script into the editor when one is chosen.
   const pickScript = (id) => {
@@ -79,7 +83,10 @@ export default function Studio() {
     try {
       const { data } = await api.post('/content/clips/generate', { projectId: projectId || undefined });
       setClips(data);
-      toast({ message: `${data?.length ?? 0} clip(s) generated.`, variant: 'success' });
+      // The backend 400s when there is nothing to generate from; a zero-length
+      // 201 used to toast "0 clip(s) generated" as a success.
+      if ((data || []).length) toast({ message: `${data.length} clip(s) generated.`, variant: 'success' });
+      else setError('No clips came back — upload footage with speech and transcribe it first.');
     } catch (e) {
       setError(e.response?.data?.error || 'Clip generation failed.');
     } finally {
@@ -92,13 +99,14 @@ export default function Studio() {
     setError(null);
     try {
       const { data } = await api.post('/content/edits', {
-        projectId: projectId || clip.projectId,
+        projectId: projectId || clip.projectId || undefined,
         clipId: clip.id,
-        platform: 'tiktok',
+        platform,
       });
       setEdl(data);
       setEdlText(JSON.stringify(data.edl, null, 2));
       toast({ message: 'Edit created — it stays yours.', variant: 'success' });
+      requestAnimationFrame(() => document.getElementById('edl-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     } catch (e) {
       setError(e.response?.data?.error || 'Could not create an edit.');
     } finally {
@@ -107,6 +115,7 @@ export default function Studio() {
   };
 
   const saveEdl = async () => {
+    if (!edl?.id) { setError('No edit loaded yet — generate an AI edit first.'); return; }
     let parsed;
     try {
       parsed = JSON.parse(edlText);
@@ -170,12 +179,48 @@ export default function Studio() {
               ))}
             </select>
           </div>
-          <button className="ghost flex items-center gap-2 self-end" onClick={load}>
+          <div className="min-w-[160px]">
+            <label htmlFor="studio-platform">Edit for</label>
+            <select id="studio-platform" value={platform} onChange={(e) => setPlatform(e.target.value)}>
+              {['tiktok', 'reels', 'shorts', 'x', 'linkedin'].map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+          <button className="ghost flex items-center gap-2 self-end" onClick={() => load()}>
             <RefreshCw className="w-4 h-4" />
             Refresh
           </button>
         </div>
       </Panel>
+
+      {/* ---- EDL ----------------------------------------------------------
+          Sits directly under the working set so the edit is one glance away —
+          it used to live at the very bottom, past an unbounded clips list. */}
+      {edl && (
+        <Panel
+          title={`Editable EDL — ${edl.platform} ${edl.aspect}`}
+          taped
+          subtitle={`Version ${edl.version}`}
+          className="mt-4"
+          actions={
+            <button className="flex items-center gap-2 tiny" onClick={saveEdl} disabled={busy}>
+              <Save className="w-3.5 h-3.5" />
+              {busy ? 'Saving…' : 'Save my edit'}
+            </button>
+          }
+        >
+          <div id="edl-panel" className="bb-grid bb-g4 mb-3">
+            <DataRow label="Edit id" mono>
+              {edl.id}
+            </DataRow>
+            <DataRow label="Platform">{edl.platform}</DataRow>
+            <DataRow label="Aspect">{edl.aspect}</DataRow>
+            <DataRow label="Version">{edl.version}</DataRow>
+          </div>
+          <textarea rows={12} value={edlText} onChange={(e) => setEdlText(e.target.value)} aria-label="EDL JSON" className="font-mono !text-xs" />
+        </Panel>
+      )}
 
       <div className="bb-grid bb-g2 mt-4 items-start">
         {/* ---- Script + alignment ---------------------------------------- */}
@@ -217,12 +262,13 @@ export default function Studio() {
                       <p className="text-sm leading-snug">{a.sentence}</p>
                       <div className="bb-row mt-1.5">
                         <span className="pill pill-blue">
-                          {a.best?.seg?.startSec}s – {a.best?.seg?.endSec}s
+                          {a.best?.seg?.startSec ?? '?'}s – {a.best?.seg?.endSec ?? '?'}s
                         </span>
                         <span className="pill">
                           score {a.best?.score == null ? '—' : a.best.score}
                         </span>
                       </div>
+                      {!!a.reason && <p className="mono-xs muted mt-1">{a.reason}</p>}
                     </div>
                   </li>
                 ))}
@@ -255,15 +301,22 @@ export default function Studio() {
             {clips.map((c) => (
               <li key={c.id} className="card !p-3">
                 <div className="flex items-start justify-between gap-3">
-                  <h3 className="!text-[14px] flex-1 min-w-0 break-words">{c.title}</h3>
+                  <h3 className="!text-[14px] flex-1 min-w-0 break-words">{c.title || 'Untitled clip'}</h3>
                   <span className="pill pill-pink flex-none">
-                    <StatusDot color={c.viralityScore >= 0.7 ? 'green' : c.viralityScore >= 0.4 ? 'orange' : 'red'} size={7} pulse={false} />
-                    {c.viralityScore}
+                    {c.viralityScore == null ? (
+                      'score —'
+                    ) : (
+                      <>
+                        <StatusDot color={c.viralityScore >= 0.7 ? 'green' : c.viralityScore >= 0.4 ? 'orange' : 'red'} size={7} pulse={false} />
+                        {c.viralityScore}
+                      </>
+                    )}
                   </span>
                 </div>
                 <div className="mono-xs muted mt-1.5">
-                  {c.startSec}s → {c.endSec}s {c.hookText ? `· ${c.hookText}` : ''}
+                  {c.startSec ?? '?'}s → {c.endSec ?? '?'}s {c.hookText ? `· ${c.hookText}` : ''}
                 </div>
+                {!!c.reasons?.length && <p className="mono-xs muted mt-1">{c.reasons.join(' · ')}</p>}
                 <Bar value={(c.viralityScore ?? 0) * 100} className="mt-2" />
                 <button className="ghost tiny mt-2" onClick={() => makeEdit(c)} disabled={busy}>
                   AI edit (keep editable)
@@ -273,32 +326,6 @@ export default function Studio() {
           </ul>
         </Panel>
       </div>
-
-      {/* ---- EDL ---------------------------------------------------------- */}
-      {edl && (
-        <Panel
-          title={`Editable EDL — ${edl.platform} ${edl.aspect}`}
-          taped
-          subtitle={`Version ${edl.version}`}
-          className="mt-4"
-          actions={
-            <button className="flex items-center gap-2 tiny" onClick={saveEdl} disabled={busy}>
-              <Save className="w-3.5 h-3.5" />
-              {busy ? 'Saving…' : 'Save my edit'}
-            </button>
-          }
-        >
-          <div className="bb-grid bb-g4 mb-3">
-            <DataRow label="Edit id" mono>
-              {edl.id}
-            </DataRow>
-            <DataRow label="Platform">{edl.platform}</DataRow>
-            <DataRow label="Aspect">{edl.aspect}</DataRow>
-            <DataRow label="Version">{edl.version}</DataRow>
-          </div>
-          <textarea rows={12} value={edlText} onChange={(e) => setEdlText(e.target.value)} aria-label="EDL JSON" className="font-mono !text-xs" />
-        </Panel>
-      )}
     </PaperPage>
   );
 }

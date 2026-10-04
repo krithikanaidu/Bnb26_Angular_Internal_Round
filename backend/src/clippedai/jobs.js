@@ -114,11 +114,12 @@ async function processJob(jobId) {
       candidates: candidates.slice(0, 12),
     };
 
-    // 3. Write the packaging copy, then render each clip.
-    const outputs = [];
-    for (let i = 0; i < selected.length; i += 1) {
-      await setProgress(job, 'titling', 41 + Math.round((i / selected.length) * 4));
-      const clip = selected[i];
+    // 3. Write the packaging copy for ALL clips concurrently (read-only LLM
+    //    calls — the serial version paid N × 45s timeouts back to back), then
+    //    render each clip serially (ffmpeg is CPU-bound; parallel encodes on a
+    //    demo box slow everything down instead of speeding it up).
+    await setProgress(job, 'titling', 41);
+    const copies = await Promise.all(selected.map(async (clip, i) => {
       // Dynamic only: copy derives from spoken words minus hallucinated loops.
       const cleanText = scrubRange(transcript.words, clip.start_time, clip.end_time)
         .map((w) => w.word).join(' ') || clip.text || '';
@@ -127,8 +128,12 @@ async function processJob(jobId) {
         duration: clip.end_time - clip.start_time,
         index: i,
       });
-
-      await setProgress(job, 'rendering', 45 + Math.round((i / selected.length) * 44));
+      return { clip, copy };
+    }));
+    const outputs = [];
+    for (let i = 0; i < copies.length; i += 1) {
+      const { clip, copy } = copies[i];
+      await setProgress(job, 'rendering', 45 + Math.round((i / copies.length) * 44));
       const out = await renderOne({
         Clip: ClipModel,
         job,

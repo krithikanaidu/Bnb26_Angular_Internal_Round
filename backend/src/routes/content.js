@@ -1,9 +1,10 @@
 const router = require('express').Router();
-const { Script, Hook, TranscriptSegment, Clip, Asset, EditProject, PublishJob, PlatformVariant, Metric } = require('../models');
+const { Script, Hook, TranscriptSegment, Clip, Asset, EditProject, PublishJob, PlatformVariant, Metric, ConnectedAccount } = require('../models');
 const { generateHooks, generateScript } = require('../services/ai.service');
 const { alignScriptToTranscript, generateClips, adaptClip, PLATFORM_PRESETS } = require('../services/content.service');
-const { adaptMany, validateVariant, readEdl, PRESETS } = require('../services/adaptation.service');
+const { adaptMany, validateVariant, readEdl, PRESETS, DEFAULT_PLATFORMS } = require('../services/adaptation.service');
 const { getTagsForTopic } = require('../services/trends.service');
+const { fetchVideoStats } = require('../services/youtube.service');
 
 // --- Scripts & hooks ---
 router.post('/generate-hooks', async (req, res) => {
@@ -30,6 +31,9 @@ router.get('/scripts', async (req, res) => {
 // --- Script-to-video understanding ---
 router.post('/align', async (req, res) => {
   const { scriptBody, assetId, projectId } = req.body;
+  if (!String(scriptBody || '').trim()) {
+    return res.status(400).json({ error: 'scriptBody is required — load or write a script before aligning.' });
+  }
   const where = assetId ? { assetId } : projectId ? { projectId } : {};
   const segments = await TranscriptSegment.findAll({ where, order: [['startSec', 'ASC']] });
   if (!segments.length) return res.status(400).json({ error: 'No transcript segments for this asset. Upload footage and run transcription first (ClipAI or the Video Editor).' });
@@ -41,6 +45,9 @@ router.post('/clips/generate', async (req, res) => {
   const { assetId, projectId } = req.body;
   const where = assetId ? { assetId } : projectId ? { projectId } : {};
   const segments = await TranscriptSegment.findAll({ where, order: [['startSec', 'ASC']] });
+  if (!segments.length) {
+    return res.status(400).json({ error: 'No transcript segments to generate from. Upload footage with speech and transcribe it first.' });
+  }
   const cands = generateClips(segments);
   const saved = [];
   for (const [i, c] of cands.entries()) {
@@ -57,16 +64,25 @@ router.get('/clips', async (req, res) => {
 // --- AI-assisted editable edits (EDL stays editable) ---
 router.post('/edits', async (req, res) => {
   const { projectId, clipId, platform = 'tiktok', tweaks = {} } = req.body;
-  const clip = clipId ? await Clip.findByPk(clipId) : null;
+  if (!clipId) {
+    return res.status(400).json({ error: 'clipId is required — pick the clip this edit is for.' });
+  }
+  const clip = await Clip.findByPk(clipId);
+  if (!clip) return res.status(404).json({ error: 'clip not found' });
+  if (!PLATFORM_PRESETS[platform]) {
+    return res.status(400).json({ error: `platform must be one of: ${Object.keys(PLATFORM_PRESETS).join(', ')}` });
+  }
   const edl = {
     tracks: [{ type: 'video', cuts: [{ start: clip?.startSec ?? 0, end: clip?.endSec ?? 30, speed: 1.1 }] }],
     captions: clip?.captions || [{ t: 0, text: clip?.hookText || 'Hook here' }],
     overlays: [{ type: 'hookTitle', text: clip?.hookText || 'Hook', style: platform }],
     hook: clip?.hookText || '',
-    cta: 'Follow for part 2',
+    // Empty until the creator writes one: adapt falls back to the platform
+    // preset default, so a hardcoded string here would never be honest.
+    cta: '',
     ...tweaks,
   };
-  const edit = await EditProject.create({ projectId, clipId, edl, platform, aspect: (PLATFORM_PRESETS[platform] || {}).aspect || '9:16' });
+  const edit = await EditProject.create({ projectId: projectId || null, clipId, edl, platform, aspect: (PLATFORM_PRESETS[platform] || {}).aspect || '9:16' });
   res.status(201).json(edit);
 });
 router.get('/edits', async (req, res) => {
@@ -76,7 +92,15 @@ router.get('/edits', async (req, res) => {
 router.patch('/edits/:id', async (req, res) => {
   const e = await EditProject.findByPk(req.params.id);
   if (!e) return res.status(404).json({ error: 'not found' });
-  await e.update({ edl: req.body.edl ?? e.edl, version: e.version + 1 });
+  const next = req.body.edl ?? e.edl;
+  // An EDL must stay an EDL: tracks/captions arrays are the contract the
+  // timeline, adapt and render all read. A bare {} would save fine and break
+  // the next read, so reject it with a message instead.
+  if (!next || typeof next !== 'object' || !Array.isArray(next.tracks) || !Array.isArray(next.captions)) {
+    return res.status(400).json({ error: 'edl must be an object with tracks[] and captions[] arrays.' });
+  }
+  const changed = JSON.stringify(next) !== JSON.stringify(e.edl);
+  await e.update({ edl: next, version: changed ? e.version + 1 : e.version });
   res.json(e);
 });
 
@@ -91,8 +115,12 @@ router.patch('/edits/:id', async (req, res) => {
 // Trends + Groq niche tags) for the given topic/niche.
 router.post('/adapt', async (req, res) => {
   const clipId = req.body.clip_id || req.body.clipId;
-  const { platforms = ['tiktok', 'reels', 'shorts'], baseTags = [], cta } = req.body;
+  const { platforms = DEFAULT_PLATFORMS, baseTags = [], cta } = req.body;
   let { topicTags = [], topic = '', niche = '', geo = 'IN' } = req.body;
+  const unknown = (platforms || []).filter((p) => !PRESETS[p]);
+  if (unknown.length) {
+    return res.status(400).json({ error: `unknown platform(s): ${unknown.join(', ')}. Valid: ${Object.keys(PRESETS).join(', ')}` });
+  }
   const clip = await Clip.findByPk(clipId);
   if (!clip) return res.status(404).json({ error: 'clip not found' });
 
@@ -181,10 +209,11 @@ router.patch('/variants/:id', async (req, res) => {
 
 // --- Publish workflow ---
 // Accepts variant_id|variantId: caption/hashtags default from the variant (F7.3 → F8.1)
+// Accepts accountId: the creator's connected platform identity the post goes out as.
 router.post('/publish', async (req, res) => {
   const clipId = req.body.clip_id || req.body.clipId;
   const variantId = req.body.variant_id || req.body.variantId;
-  const { projectId, platform, scheduledAt, scheduled_at, caption, hashtags } = req.body;
+  const { projectId, platform, scheduledAt, scheduled_at, caption, hashtags, accountId } = req.body;
   let finalCaption = caption;
   let finalTags = hashtags;
   let project = projectId;
@@ -197,11 +226,20 @@ router.post('/publish', async (req, res) => {
   if (!platform || !PRESETS[platform]) {
     return res.status(400).json({ error: `platform must be one of: ${Object.keys(PRESETS).join(', ')}` });
   }
+  let account = null;
+  if (accountId) {
+    account = await ConnectedAccount.findByPk(accountId);
+    if (!account) return res.status(404).json({ error: 'connected account not found' });
+    if (account.provider !== platform) {
+      return res.status(400).json({ error: `account ${account.handle} is a ${account.provider} account, not ${platform}` });
+    }
+  }
   const at = scheduledAt || scheduled_at;
   // Caption/hashtags come from the variant or the caller. If neither supplied
   // them, store empty and let the UI prompt — do not invent a caption or tag.
   const job = await PublishJob.create({
     projectId: project || null, clipId: clipId || null, variantId: variantId || null,
+    accountId: account ? account.id : null,
     platform,
     scheduledAt: at || null,
     caption: finalCaption || '',
@@ -215,7 +253,58 @@ router.post('/publish', async (req, res) => {
 });
 router.get('/publish', async (req, res) => {
   const where = req.query.projectId ? { projectId: req.query.projectId } : {};
-  res.json(await PublishJob.findAll({ where, order: [['createdAt', 'DESC']] }));
+  const jobs = await PublishJob.findAll({ where, order: [['createdAt', 'DESC']] });
+  const accounts = await ConnectedAccount.findAll();
+  const byId = Object.fromEntries(accounts.map((a) => [a.id, a]));
+  // Attach the posting identity (handle) without leaking tokens to the client.
+  res.json(jobs.map((j) => {
+    const a = byId[j.accountId];
+    return {
+      ...j.toJSON(),
+      account: a ? { id: a.id, provider: a.provider, handle: a.handle, displayName: a.displayName } : null,
+    };
+  }));
+});
+
+// --- Connected platform accounts ---
+// The creator links each platform identity once (handle/channel + optional
+// token); publish jobs then reference the account instead of hardcoding "me".
+router.get('/accounts', async (req, res) => {
+  const rows = await ConnectedAccount.findAll({ order: [['provider', 'ASC']] });
+  res.json(rows.map((r) => {
+    const { accessToken, refreshToken, ...safe } = r.toJSON();
+    return safe;
+  }));
+});
+
+router.post('/accounts', async (req, res) => {
+  const { provider, handle, displayName, accessToken, refreshToken, expiresAt } = req.body || {};
+  if (!provider || !PRESETS[provider]) {
+    return res.status(400).json({ error: `provider must be one of: ${Object.keys(PRESETS).join(', ')}` });
+  }
+  const cleanHandle = String(handle || '').trim();
+  if (!cleanHandle) return res.status(400).json({ error: 'handle is required (e.g. @yourname or channel id).' });
+  const [row, created] = await ConnectedAccount.findOrCreate({
+    where: { provider, handle: cleanHandle },
+    defaults: { displayName: displayName || null, accessToken: accessToken || null, refreshToken: refreshToken || null, expiresAt: expiresAt || null },
+  });
+  if (!created) {
+    await row.update({
+      displayName: displayName ?? row.displayName,
+      accessToken: accessToken ?? row.accessToken,
+      refreshToken: refreshToken ?? row.refreshToken,
+      expiresAt: expiresAt ?? row.expiresAt,
+    });
+  }
+  const { accessToken: _a, refreshToken: _r, ...safe } = row.toJSON();
+  res.status(created ? 201 : 200).json(safe);
+});
+
+router.delete('/accounts/:id', async (req, res) => {
+  const a = await ConnectedAccount.findByPk(req.params.id);
+  if (!a) return res.status(404).json({ error: 'account not found' });
+  await a.destroy();
+  res.json({ ok: true });
 });
 
 // POST /api/content/publish/:id/retry — clone a failed job as scheduled-now
@@ -223,7 +312,7 @@ router.post('/publish/:id/retry', async (req, res) => {
   const j = await PublishJob.findByPk(req.params.id);
   if (!j) return res.status(404).json({ error: 'job not found' });
   const clone = await PublishJob.create({
-    projectId: j.projectId, clipId: j.clipId, variantId: j.variantId, platform: j.platform,
+    projectId: j.projectId, clipId: j.clipId, variantId: j.variantId, accountId: j.accountId, platform: j.platform,
     scheduledAt: new Date(), caption: j.caption, status: 'scheduled', hashtags: j.hashtags,
   });
   res.status(201).json(clone);
@@ -246,8 +335,11 @@ router.delete('/publish/:id', async (req, res) => {
 // and the UI renders an empty state instead of a fabricated insight.
 router.get('/insights', async (req, res) => {
   const clips = await Clip.findAll({ order: [['viralityScore', 'DESC']], limit: 20 });
-  const metrics = await Metric.findAll({ limit: 100 });
-  const totals = metrics.reduce((a, m) => ({ views: a.views + m.views, likes: a.likes + m.likes, comments: a.comments + m.comments, shares: a.shares + m.shares }), { views: 0, likes: 0, comments: 0, shares: 0 });
+  const metrics = await Metric.findAll({ limit: 100, order: [['createdAt', 'DESC']] });
+  // No rows → null, not zeros: an empty account must not look like a dead one.
+  const totals = metrics.length
+    ? metrics.reduce((a, m) => ({ views: a.views + (m.views || 0), likes: a.likes + (m.likes || 0), comments: a.comments + (m.comments || 0), shares: a.shares + (m.shares || 0) }), { views: 0, likes: 0, comments: 0, shares: 0 })
+    : null;
 
   const avgClipLen = clips.length
     ? +(clips.reduce((a, c) => a + (c.endSec - c.startSec), 0) / clips.length).toFixed(1)
@@ -280,8 +372,63 @@ router.get('/insights', async (req, res) => {
       bestPostWindow: null,
       suggestion,
     },
-    series: metrics.map((m) => ({ platform: m.platform, views: m.views, likes: m.likes })),
+    series: metrics.map((m) => ({
+      platform: m.platform, views: m.views, likes: m.likes, comments: m.comments,
+      shares: m.shares, retentionPct: m.retentionPct, clipId: m.clipId,
+      source: m.source, createdAt: m.createdAt,
+    })),
   });
+});
+
+// POST /content/metrics — record real numbers for a post (manual bridge until
+// each platform has an importer). Body: { platform*, views, likes, comments,
+// shares, retentionPct, clipId?, projectId?, source='manual', externalId? }
+router.post('/metrics', async (req, res) => {
+  const { platform, views, likes, comments, shares, retentionPct, clipId, projectId, source = 'manual', externalId } = req.body || {};
+  if (!platform || !PRESETS[platform]) {
+    return res.status(400).json({ error: `platform must be one of: ${Object.keys(PRESETS).join(', ')}` });
+  }
+  const num = (v) => (v == null || v === '' ? 0 : Math.max(0, Number(v) || 0));
+  const row = await Metric.create({
+    platform,
+    views: num(views), likes: num(likes), comments: num(comments),
+    shares: num(shares), retentionPct: num(retentionPct),
+    clipId: clipId || null, projectId: projectId || null,
+    source, externalId: externalId || null,
+  });
+  res.status(201).json(row);
+});
+
+// GET /content/youtube/status — is the dynamic source configured?
+router.get('/youtube/status', (req, res) => {
+  res.json({ configured: !!process.env.YOUTUBE_API_KEY });
+});
+
+// POST /content/youtube/stats { url|videoId, clipId?, projectId? } — pull REAL
+// public stats for a YouTube video via Data API v3 and store them as a Metric
+// (platform 'shorts', source 'youtube'). Re-syncing the same video updates the
+// row instead of duplicating it.
+router.post('/youtube/stats', async (req, res) => {
+  try {
+    const { url, videoId, clipId, projectId } = req.body || {};
+    const stats = await fetchVideoStats(url || videoId || '');
+    const [row, created] = await Metric.findOrCreate({
+      where: { source: 'youtube', externalId: stats.videoId },
+      defaults: {
+        platform: 'shorts', views: stats.views, likes: stats.likes, comments: stats.comments,
+        shares: 0, retentionPct: 0, clipId: clipId || null, projectId: projectId || null,
+      },
+    });
+    if (!created) {
+      await row.update({
+        views: stats.views, likes: stats.likes, comments: stats.comments,
+        clipId: clipId || row.clipId, projectId: projectId || row.projectId,
+      });
+    }
+    res.status(created ? 201 : 200).json({ metric: row, stats });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
 
 module.exports = router;

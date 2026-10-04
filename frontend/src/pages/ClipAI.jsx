@@ -3,16 +3,23 @@ import { Link } from 'react-router-dom';
 import { Download, Scissors, Link2, Upload, RefreshCw, X, Film } from 'lucide-react';
 
 import { api } from '../lib/api';
-import { createJob, createJobFromLink, inspectLink, listJobs, getJob, deleteJob, getHealth, mediaUrl, STAGES } from '../clippedai/api';
+import { createJob, createJobFromLink, inspectLink, listJobs, getJob, deleteJob, getHealth, mediaUrl, downloadUrl, STAGES } from '../clippedai/api';
 import { PaperPage, PageHead, Panel, EmptyState, ErrorNote, LoadingNote, Bar, UnderlineDoodle } from '../ui/AppKit';
 import { StatusDot } from '../ui/StatusDot';
 import { StickerLabel } from '../ui/StickerLabel';
 import { useDialog, useToast } from '../ui/uiStore';
 
 const fmtTime = (s) => {
-  if (s === undefined || s === null) return '—';
-  const m = Math.floor(s / 60);
-  return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n < 0) return '—';
+  const m = Math.floor(n / 60);
+  return `${m}:${String(Math.floor(n % 60)).padStart(2, '0')}`;
+};
+
+const fmtDate = (v) => {
+  if (v == null) return 'date unknown';
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? 'date unknown' : d.toLocaleString();
 };
 
 /** Job stage → status colour. Queued/running read as blue, done green, failed red. */
@@ -27,28 +34,39 @@ function StagePill({ status }) {
   );
 }
 
-function ClipCard({ clip }) {
+function ClipCard({ clip, jobId }) {
+  const src = clip.file && !clip.fileMissing ? mediaUrl(clip.file) : null;
+  const dl = jobId && clip.index ? downloadUrl(jobId, clip.index) : src;
   return (
     <article className="card !p-0 !overflow-hidden">
-      <video
-        src={mediaUrl(clip.file)}
-        controls
-        preload="metadata"
-        style={{ width: '100%', aspectRatio: '9/16', maxHeight: 420, background: '#000', display: 'block' }}
-      />
+      {src ? (
+        <video
+          src={src}
+          controls
+          preload="metadata"
+          style={{ width: '100%', aspectRatio: '9/16', maxHeight: 420, background: '#000', display: 'block' }}
+        />
+      ) : (
+        <div className="p-3">
+          <p className="ex mt-2">Render file is gone (disk was cleared or the server restarted) — re-render this clip from the job.</p>
+        </div>
+      )}
       <div className="p-3">
-        <h3 className="!text-[14px] break-words">{clip.title}</h3>
+        <h3 className="!text-[14px] break-words">{clip.title || 'Untitled clip'}</h3>
         <div className="mono-xs muted mt-1">
           {fmtTime(clip.startSec)} → {fmtTime(clip.endSec)} · score {clip.score ?? '—'}
         </div>
         <Bar value={(clip.score ?? 0) * 100} className="mt-2" />
         {clip.hookText && <p className="ex mt-2">“{clip.hookText}”</p>}
+        {!!clip.reason && <p className="mono-xs muted mt-1">{clip.reason}</p>}
 
         <div className="bb-row mt-3">
-          <a href={mediaUrl(clip.file)} download className="btn tiny flex-1 flex items-center justify-center gap-1.5">
-            <Download className="w-3.5 h-3.5" />
-            Download
-          </a>
+          {dl ? (
+            <a href={dl} download className="btn tiny flex-1 flex items-center justify-center gap-1.5">
+              <Download className="w-3.5 h-3.5" />
+              Download
+            </a>
+          ) : null}
           <Link to="/studio" className="btn ghost tiny flex-1 flex items-center justify-center">
             Open in Studio
           </Link>
@@ -85,7 +103,7 @@ function JobCard({ job, onDelete, onChanged }) {
         <div className="min-w-0">
           <h3 className="break-words">{full.sourceName || 'Untitled job'}</h3>
           <div className="mono-xs muted mt-1">
-            {new Date(full.createdAt).toLocaleString()} · {full.outputs?.length || 0} shorts
+            {fmtDate(full.createdAt)} · {full.outputs?.length || 0} shorts
           </div>
         </div>
         <div className="bb-row shrink-0">
@@ -117,10 +135,13 @@ function JobCard({ job, onDelete, onChanged }) {
 
       {!!full.outputs?.length && (
         <div className="bb-grid bb-auto mt-3">
-          {full.outputs.map((c) => (
-            <ClipCard key={c.clipId || c.file} clip={c} />
+          {full.outputs.map((c, i) => (
+            <ClipCard key={c.clipId || c.file || i} clip={c} jobId={full.id} />
           ))}
         </div>
+      )}
+      {!!full.filesLost && (
+        <p className="ex mt-3">This job's render files are gone (disk was cleared or the server restarted) — the listing above is history. Re-run the job to regenerate.</p>
       )}
     </article>
   );

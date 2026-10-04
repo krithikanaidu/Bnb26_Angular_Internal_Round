@@ -14,18 +14,45 @@ function scoreOverlap(a, b) {
 }
 
 function alignScriptToTranscript(scriptBody, segments) {
-  const sentences = scriptBody.split(/(?<=[.!?\n])\s+/).filter(Boolean);
+  const sentences = String(scriptBody || '').split(/(?<=[.!?\n])\s+/).filter(Boolean);
   return sentences.map((sentence, i) => {
     const scored = segments.map((seg, j) => {
       const overlap = scoreOverlap(sentence, seg.text);
       const positionPrior = 1 - Math.abs(i / sentences.length - j / Math.max(segments.length, 1)) * 0.5;
       return { seg, score: +(overlap * 0.8 + positionPrior * 0.2).toFixed(3), overlap: +overlap.toFixed(3) };
     }).sort((a, b) => b.score - a.score);
-    return { sentence, best: scored[0] || null, alternatives: scored.slice(1, 3) };
+    const best = scored[0] || null;
+    // Explain the match so a weak one never looks as confident as a strong one:
+    // keyword hits name the evidence, a pure position fallback says so openly.
+    let reason = 'no footage segments to compare against';
+    if (best) {
+      const shared = sharedKeywords(sentence, best.seg.text);
+      reason = shared.length
+        ? `${shared.length} shared keyword${shared.length === 1 ? '' : 's'} (${shared.slice(0, 5).join(', ')})`
+        : 'position fallback only — no shared keywords, verify before shooting';
+    }
+    return { sentence, best, alternatives: scored.slice(1, 3), reason };
   });
 }
 
-// Auto clip generation: sliding window over transcript, scores virality
+// Keywords both sides share, for the alignment reason string above.
+function sharedKeywords(a, b) {
+  const B = new Set(tokenize(b));
+  return [...new Set(tokenize(a))].filter((w) => B.has(w));
+}
+
+// Cut text on a word boundary so hooks never end mid-word ("...content crea").
+function cutWords(s = '', max = 90) {
+  const t = String(s).trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const sp = cut.lastIndexOf(' ');
+  return (sp > max * 0.4 ? cut.slice(0, sp) : cut).trimEnd() + '…';
+}
+
+// Auto clip generation: sliding window over transcript, scores virality.
+// Deterministic: the same transcript always yields the same scores and order,
+// so a demo run is repeatable. Every clip carries plain-language reasons.
 function generateClips(segments, { minLen = 20, maxLen = 45 } = {}) {
   if (!segments.length) return [];
   const energyWords = ['secret', 'mistake', 'free', 'stop', 'proven', 'hack', 'shocking', 'truth', 'never', 'always', 'how', 'why'];
@@ -37,13 +64,20 @@ function generateClips(segments, { minLen = 20, maxLen = 45 } = {}) {
       texts.push(segments[j].text);
       if (dur >= minLen) {
         const joined = texts.join(' ');
-        const q = joined.split(/\?|!/).length;
-        const energy = energyWords.filter((w) => joined.toLowerCase().includes(w)).length;
-        const score = Math.min(0.99, 0.55 + q * 0.06 + energy * 0.07 + Math.random() * 0.05);
+        const lowered = joined.toLowerCase();
+        const questions = (joined.match(/[?!]/g) || []).length;
+        const energyHits = energyWords.filter((w) => lowered.includes(w));
+        const reasons = [];
+        if (questions) reasons.push(`${questions} question/exclamation mark${questions === 1 ? '' : 's'} — opening curiosity`);
+        if (energyHits.length) reasons.push(`high-energy words: ${energyHits.slice(0, 4).join(', ')}`);
+        reasons.push(`${Math.round(dur)}s window, snapped to sentence boundaries`);
+        if (!reasons.length) reasons.push('steady informative passage');
+        const score = Math.min(0.99, 0.55 + questions * 0.06 + energyHits.length * 0.07);
         clips.push({
           startSec: segments[i].startSec, endSec: segments[j].endSec,
           text: joined.slice(0, 220), viralityScore: +score.toFixed(2),
-          hookText: texts[0].slice(0, 90),
+          hookText: cutWords(texts[0], 90),
+          reasons,
         });
         break;
       }

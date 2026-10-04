@@ -154,7 +154,14 @@ async function renderOne({
   const title = (overrides.title && String(overrides.title).trim())
     || clip.title
     || await viralTitle(text, index);
-  const finalName = `${safeFilename(title).trim() || `clip-${n}`}.mp4`;
+  // Unique on disk: two clips with the same viral title (common with the
+  // heuristic fallback) used to overwrite each other, and the loser's
+  // outputs[].file then pointed at the winner's bytes — or at nothing.
+  const baseName = safeFilename(title).trim() || `clip-${n}`;
+  let finalName = `${baseName}.mp4`;
+  for (let dup = 2; fs.existsSync(path.join(jobDir, finalName)); dup += 1) {
+    finalName = `${baseName}-clip${n}-${dup}.mp4`;
+  }
   const finalPath = path.join(jobDir, finalName);
   fs.copyFileSync(tmpPath, finalPath);
 

@@ -13,32 +13,76 @@ export default function Insights() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [ytUrl, setYtUrl] = useState('');
+  const [ytBusy, setYtBusy] = useState(false);
+  const [ytErr, setYtErr] = useState(null);
+  const [ytConfigured, setYtConfigured] = useState(null);
+  const [mPlatform, setMPlatform] = useState('shorts');
+  const [mViews, setMViews] = useState('');
+  const [mLikes, setMLikes] = useState('');
+  const [mComments, setMComments] = useState('');
+  const [mShares, setMShares] = useState('');
+  const [mBusy, setMBusy] = useState(false);
+  const [mErr, setMErr] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [r, s] = await Promise.all([
+        api.get('/content/insights'),
+        api.get('/content/youtube/status').catch(() => ({ data: { configured: false } })),
+      ]);
+      setData(r.data);
+      setYtConfigured(!!s.data?.configured);
+      setError(null);
+    } catch (e) {
+      // Previously swallowed here, which rendered a full analytics report of
+      // zeros that looked exactly like a real all-zero account.
+      setData(null);
+      setError(e.response?.data?.error || 'Could not load insights — is the backend running?');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
-    api
-      .get('/content/insights')
-      .then((r) => {
-        if (active) {
-          setData(r.data);
-          setError(null);
-        }
-      })
-      // Previously swallowed here, which rendered a full analytics report of
-      // zeros that looked exactly like a real all-zero account.
-      .catch((e) => {
-        if (active) {
-          setData(null);
-          setError(e.response?.data?.error || 'Could not load insights — is the backend running?');
-        }
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
+    load().catch(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, []);
+
+  const syncYouTube = async () => {
+    if (!ytUrl.trim()) { setYtErr('Paste a YouTube link first.'); return; }
+    setYtBusy(true); setYtErr(null);
+    try {
+      await api.post('/content/youtube/stats', { url: ytUrl.trim() });
+      setYtUrl('');
+      await load();
+    } catch (e) {
+      setYtErr(e.response?.data?.error || 'YouTube sync failed.');
+    } finally {
+      setYtBusy(false);
+    }
+  };
+
+  const recordMetric = async () => {
+    setMBusy(true); setMErr(null);
+    try {
+      await api.post('/content/metrics', {
+        platform: mPlatform,
+        views: mViews === '' ? 0 : Number(mViews),
+        likes: mLikes === '' ? 0 : Number(mLikes),
+        comments: mComments === '' ? 0 : Number(mComments),
+        shares: mShares === '' ? 0 : Number(mShares),
+      });
+      setMViews(''); setMLikes(''); setMComments(''); setMShares('');
+      await load();
+    } catch (e) {
+      setMErr(e.response?.data?.error || 'Could not record those metrics.');
+    } finally {
+      setMBusy(false);
+    }
+  };
 
   const kpis = [
     ['Views', data?.totals?.views, 'Sum across recorded posts'],
@@ -71,6 +115,67 @@ export default function Insights() {
       <UnderlineDoodle className="mb-2" width={160} />
       <ErrorNote className="mt-4">{error}</ErrorNote>
       {loading && <LoadingNote className="mt-4">Loading insights…</LoadingNote>}
+
+      {/* ---- Dynamic sources ------------------------------------------------ */}
+      <div className="bb-grid bb-g2 mt-4 items-start">
+        <Panel title="Sync from YouTube" taped subtitle="Real public stats via YouTube Data API v3 — no OAuth needed">
+          <div className="bb-row">
+            <label htmlFor="insights-yt" className="sr-only">YouTube link</label>
+            <input
+              id="insights-yt"
+              value={ytUrl}
+              onChange={(e) => setYtUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') syncYouTube(); }}
+              placeholder="Paste a video / Shorts link…"
+              className="flex-1 min-w-[180px]"
+            />
+            <button className="tiny" onClick={syncYouTube} disabled={ytBusy || !ytUrl.trim()}>
+              {ytBusy ? 'Syncing…' : 'Pull stats'}
+            </button>
+          </div>
+          {ytConfigured === false && (
+            <p className="ex mt-2">YouTube API key not configured on the backend (YOUTUBE_API_KEY) — syncing will fail until it is set.</p>
+          )}
+          {ytConfigured === true && (
+            <p className="ex mt-2">Connected — re-syncing the same video updates its row instead of duplicating it.</p>
+          )}
+          {ytErr && <span className="error-label mt-2 !block">{ytErr}</span>}
+        </Panel>
+
+        <Panel title="Record metrics" taped subtitle="Type in real numbers from any platform dashboard">
+          <div className="bb-row">
+            <label htmlFor="insights-m-platform" className="sr-only">Platform</label>
+            <select id="insights-m-platform" value={mPlatform} onChange={(e) => setMPlatform(e.target.value)} className="!w-auto">
+              {['tiktok', 'reels', 'shorts', 'x', 'linkedin'].map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+            {[
+              ['Views', mViews, setMViews],
+              ['Likes', mLikes, setMLikes],
+              ['Comments', mComments, setMComments],
+              ['Shares', mShares, setMShares],
+            ].map(([label, value, set]) => (
+              <span key={label} className="flex items-center gap-1.5">
+                <label htmlFor={`insights-m-${label}`} className="sr-only">{label}</label>
+                <input
+                  id={`insights-m-${label}`}
+                  type="number"
+                  min={0}
+                  value={value}
+                  onChange={(e) => set(e.target.value)}
+                  placeholder={label}
+                  className="!w-[92px]"
+                />
+              </span>
+            ))}
+            <button className="tiny" onClick={recordMetric} disabled={mBusy}>
+              {mBusy ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+          {mErr && <span className="error-label mt-2 !block">{mErr}</span>}
+        </Panel>
+      </div>
 
       {/* ---- Totals ------------------------------------------------------ */}
       <section aria-label="Totals" className="mt-6">
@@ -152,6 +257,8 @@ export default function Insights() {
                 <div className="bb-row mt-2">
                   <span className="pill">♥ {m.likes ?? NO_VALUE_DASH}</span>
                   <span className="pill">💬 {m.comments ?? NO_VALUE_DASH}</span>
+                  <span className="pill">↗ {m.shares ?? NO_VALUE_DASH}</span>
+                  {m.source && m.source !== 'manual' && <span className="pill pill-blue">via {m.source}</span>}
                 </div>
               </li>
             ))}
