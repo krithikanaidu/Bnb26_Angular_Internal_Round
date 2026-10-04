@@ -30,6 +30,13 @@ export default function Publish() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [accounts, setAccounts] = useState([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
+  const [accountErr, setAccountErr] = useState(null);
+  const [newProvider, setNewProvider] = useState('tiktok');
+  const [newHandle, setNewHandle] = useState('');
+  const [newName, setNewName] = useState('');
+  const [accountBusy, setAccountBusy] = useState(false);
 
   const load = async () => {
     try {
@@ -41,7 +48,49 @@ export default function Publish() {
       setLoading(false);
     }
   };
-  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); loadAccounts(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadAccounts = async () => {
+    setAccountsLoading(true);
+    try {
+      const { data } = await api.get('/content/accounts');
+      setAccounts(data || []);
+      setAccountErr(null);
+    } catch (e) {
+      setAccountErr(e.response?.data?.error || 'Could not load connected accounts.');
+    } finally {
+      setAccountsLoading(false);
+    }
+  };
+
+  const addAccount = async () => {
+    if (!newHandle.trim()) { setAccountErr('Enter the handle or channel id for this platform.'); return; }
+    setAccountBusy(true); setAccountErr(null);
+    try {
+      await api.post('/content/accounts', { provider: newProvider, handle: newHandle.trim(), displayName: newName.trim() || undefined });
+      setNewHandle(''); setNewName('');
+      await loadAccounts();
+    } catch (e) {
+      setAccountErr(e.response?.data?.error || 'Could not connect that account.');
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const removeAccount = async (id) => {
+    setAccountBusy(true); setAccountErr(null);
+    try {
+      await api.delete(`/content/accounts/${id}`);
+      await loadAccounts();
+    } catch (e) {
+      setAccountErr(e.response?.data?.error || 'Could not remove that account.');
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  // First connected identity per platform — the schedule call posts "as" this.
+  const accountFor = (provider) => accounts.find((a) => a.provider === provider) || null;
 
   useEffect(() => {
     if (!clipId) { setVariants([]); setTrendTags([]); setPickedTags([]); setTrendsMeta(null); setEdlMeta(null); setVariantsError(null); return; }
@@ -113,10 +162,12 @@ export default function Publish() {
 
   const schedule = async (variant, when) => {
     const clip = clips.find((c) => c.id === clipId);
+    const account = accountFor(variant.platform);
     try {
       await api.post('/content/publish', {
         variant_id: variant.id, clipId, projectId: clip?.projectId,
         platform: variant.platform, caption: variant.caption,
+        accountId: account ? account.id : undefined,
         scheduledAt: when ? new Date(when) : null,
       });
       setErr(null);
@@ -165,6 +216,69 @@ export default function Publish() {
       <ErrorNote className="mt-4">{err}</ErrorNote>
       {loading && <LoadingNote className="mt-3">Loading clips and publish jobs…</LoadingNote>}
 
+      {/* ---- Connected accounts ------------------------------------------- */}
+      <section aria-label="Connected platform accounts" className="mt-4">
+        <Panel title="Connected accounts" taped subtitle="Link each platform identity once — scheduled posts go out as that account">
+          {accountsLoading && <LoadingNote>Loading accounts…</LoadingNote>}
+          {accountErr && <span className="error-label">{accountErr}</span>}
+          {!accountsLoading && accounts.length > 0 && (
+            <div className="tags mt-1">
+              {accounts.map((a) => (
+                <span key={a.id} className="pill pill-blue">
+                  {a.provider}: <b>{a.handle}</b>
+                  {a.displayName ? ` (${a.displayName})` : ''}
+                  <button
+                    type="button"
+                    className="ghost tiny !p-1 !ml-1"
+                    onClick={() => removeAccount(a.id)}
+                    disabled={accountBusy}
+                    title={`Disconnect ${a.handle}`}
+                    aria-label={`Disconnect ${a.handle}`}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {!accountsLoading && accounts.length === 0 && !accountErr && (
+            <p className="ex mt-1">No accounts connected yet — scheduling still works, but posts won't be attributed to anyone.</p>
+          )}
+          <div className="bb-row mt-3">
+            <label htmlFor="pub-acct-provider" className="sr-only">Platform</label>
+            <select
+              id="pub-acct-provider"
+              value={newProvider}
+              onChange={(e) => setNewProvider(e.target.value)}
+              className="!w-auto"
+            >
+              {['tiktok', 'reels', 'shorts', 'x', 'linkedin'].map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+            <label htmlFor="pub-acct-handle" className="sr-only">Handle or channel id</label>
+            <input
+              id="pub-acct-handle"
+              value={newHandle}
+              onChange={(e) => setNewHandle(e.target.value)}
+              placeholder="@handle or channel id"
+              className="!w-auto min-w-[200px]"
+            />
+            <label htmlFor="pub-acct-name" className="sr-only">Display name (optional)</label>
+            <input
+              id="pub-acct-name"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Display name (optional)"
+              className="!w-auto min-w-[180px]"
+            />
+            <button className="tiny" onClick={addAccount} disabled={accountBusy || !newHandle.trim()}>
+              {accountBusy ? 'Connecting…' : 'Connect account'}
+            </button>
+          </div>
+        </Panel>
+      </section>
+
       {/* ---- Steps 1-3 ---------------------------------------------------- */}
       <section aria-label="Adapt a clip for platforms" className="mt-4">
         <Panel title="Adapt a clip" taped>
@@ -183,7 +297,7 @@ export default function Publish() {
                   <option value="">Select clip</option>
                   {clips.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.title} ({c.startSec}s→{c.endSec}s)
+                      {c.title || 'Untitled clip'} ({c.startSec ?? '?'}s→{c.endSec ?? '?'}s)
                     </option>
                   ))}
                 </select>
@@ -304,7 +418,7 @@ export default function Publish() {
           </StickerLabel>
         </div>
         <p className="ex mb-3 !normal-case !font-body !tracking-normal">
-          Scheduling records only — no platform connector is wired up yet, so nothing here uploads to TikTok/Reels/Shorts/X.
+          Scheduling records — each post goes out as the connected account above. No platform upload API is wired up yet, so nothing here uploads to TikTok/Reels/Shorts/X.
         </p>
 
         {!loading && jobs.length === 0 && <EmptyState title="Nothing scheduled yet" icon={<CalendarClock className="w-5 h-5" />}>Schedule a variant above and it will appear here.</EmptyState>}
@@ -313,6 +427,8 @@ export default function Publish() {
           {jobs.map((j) => (
             <article key={j.id} className="card !p-4 flex items-start gap-3 flex-wrap">
               <span className="pill pill-blue">{j.platform}</span>
+              {j.account && <span className="pill pill-olive">as {j.account.handle}</span>}
+              {!j.account && <span className="pill">no account linked</span>}
               <span className="pill">
                 <StatusDot color={JOB_STATUS_COLOR[j.status] ?? 'orange'} size={7} pulse={false} />
                 {j.status}

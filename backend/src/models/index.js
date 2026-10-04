@@ -105,6 +105,7 @@ const PublishJob = define('PublishJob', {
   projectId: DataTypes.UUID,
   clipId: DataTypes.UUID,
   variantId: DataTypes.UUID,
+  accountId: DataTypes.UUID, // ConnectedAccount used for this post (null = no account linked)
   platform: { type: DataTypes.STRING, allowNull: false },
   scheduledAt: DataTypes.DATE,
   status: { type: DataTypes.STRING, defaultValue: 'draft' },
@@ -140,6 +141,23 @@ const Metric = define('Metric', {
   comments: { type: DataTypes.INTEGER, defaultValue: 0 },
   shares: { type: DataTypes.INTEGER, defaultValue: 0 },
   retentionPct: { type: DataTypes.FLOAT, defaultValue: 0 },
+  // Where the numbers came from: 'manual' (typed in), 'youtube' (Data API v3),
+  // plus the platform-side id so re-syncs update instead of duplicating.
+  source: { type: DataTypes.STRING, defaultValue: 'manual' },
+  externalId: DataTypes.STRING,
+});
+
+// A creator's connected platform identity: handle/channel + optional token.
+// Tokens are stored for future OAuth; handle-only rows already unblock
+// per-account scheduling ("post as @x on TikTok") for the demo.
+const ConnectedAccount = define('ConnectedAccount', {
+  provider: { type: DataTypes.STRING, allowNull: false }, // tiktok|reels|shorts|x|linkedin
+  handle: { type: DataTypes.STRING, allowNull: false }, // @handle, channel id, profile URL…
+  displayName: DataTypes.STRING,
+  accessToken: DataTypes.TEXT,
+  refreshToken: DataTypes.TEXT,
+  expiresAt: DataTypes.DATE,
+  meta: { type: DataTypes.JSONB, defaultValue: {} },
 });
 
 // Account behind a signed-in session (AGENT/FEATURES.md F1.1).
@@ -169,5 +187,5 @@ PlatformVariant.belongsTo(Clip, { foreignKey: 'clip_id' });
 
 module.exports = {
   sequelize, Project, Asset, Script, Hook, HookPattern, TranscriptSegment, Clip,
-  EditProject, PublishJob, PlatformVariant, Metric, ClipJob, User,
+  EditProject, PublishJob, PlatformVariant, Metric, ClipJob, User, ConnectedAccount,
 };

@@ -85,6 +85,9 @@ const PORT = process.env.PORT || 5000;
     // existing Clip rows and leaves the long-lived process resolving a schema
     // that no longer matches the model's expectations.
     await require('./clippedai/schema').ensureClipAiSchema();
+    // Same guarantee for the content/publish/intelligence tables (accounts,
+    // publish_jobs.account_id, metrics.source/external_id) — see config/contentSchema.js.
+    await require('./config/contentSchema').ensureContentSchema();
     try {
       await sequelize.sync({ alter: true });
       console.log('[db] synced');
@@ -102,7 +105,18 @@ const PORT = process.env.PORT || 5000;
     await ensureBucket().catch((e) => console.warn('[supabase]', e.message));
     await require('./clippedai/schema').ensureClipAiSchema();
     await require('./clippedai/jobs').recoverStuckJobs();
-    app.listen(PORT, () => console.log(`CreatorAI backend on :${PORT}`));
+    const server = app.listen(PORT, () => console.log(`CreatorAI backend on :${PORT}`));
+    // A busy port used to surface as a bare "[uncaughtException] listen
+    // EADDRINUSE" with the process lingering half-dead. Say plainly what
+    // happened and exit so nodemon / the terminal shows a clean failure.
+    server.on('error', (e) => {
+      if (e && e.code === 'EADDRINUSE') {
+        console.error(`[fatal] Port ${PORT} is already in use — another CreatorAI backend is running.`);
+        console.error(`  Stop it first (or set PORT=5001 in backend/.env), then retry.`);
+        process.exit(1);
+      }
+      throw e;
+    });
   } catch (e) {
     console.error('[fatal] Could not connect to Supabase Postgres.');
     console.error('  1. Copy backend/.env.example -> backend/.env');

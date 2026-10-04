@@ -47,6 +47,15 @@ export async function deleteJob(id) {
   return data;
 }
 
+/**
+ * Same-origin attachment download for one rendered clip (index = 1-based clip
+ * number as stored on the output). The backend answers with
+ * Content-Disposition: attachment, so the save dialog appears even though the
+ * media itself lives on another origin — a cross-origin `download` attribute
+ * alone is ignored by browsers.
+ */
+export const downloadUrl = (jobId, index) => `${API}/clippedai/jobs/${jobId}/clips/${index}/file`;
+
 export async function getHealth() {
   const { data } = await api.get(`${API}/health`);
   return data;

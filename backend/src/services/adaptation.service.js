@@ -215,4 +215,4 @@ function presetCtaDefault(platforms) {
   return (platforms.length && PRESETS[platforms[0]].cta_default) || '';
 }
 
-module.exports = { PRESETS, validateVariant, selectHashtags, rewriteCaptionsBatch, buildTitle, computeReframe, readEdl, adaptMany, presetCtaDefault };
+module.exports = { PRESETS, validateVariant, selectHashtags, rewriteCaptionsBatch, buildTitle, computeReframe, readEdl, adaptMany, presetCtaDefault, DEFAULT_PLATFORMS: ['tiktok', 'reels', 'shorts'] };

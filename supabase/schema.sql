@@ -17,7 +17,10 @@ create table if not exists "EditProjects" (id uuid primary key default uuid_gene
 -- Declared before PublishJobs because PublishJobs.variant_id references it.
 create table if not exists "PlatformVariants" (id uuid primary key default uuid_generate_v4(), clip_id uuid references "Clips"(id) on delete cascade, platform text not null, aspect text default '9:16', duration float, title text, caption text, hashtags jsonb default '[]', cta text, caption_style text, reframe jsonb default '{}', edl_version int, warnings jsonb default '[]', status text default 'ready', asset_id uuid, created_at timestamptz default now(), updated_at timestamptz default now());
 create table if not exists "PublishJobs" (id uuid primary key default uuid_generate_v4(), project_id uuid, clip_id uuid, variant_id uuid references "PlatformVariants"(id) on delete set null, platform text not null, scheduled_at timestamptz, status text default 'draft', caption text, hashtags jsonb default '[]', result_url text, created_at timestamptz default now(), updated_at timestamptz default now());
-create table if not exists "Metrics" (id uuid primary key default uuid_generate_v4(), project_id uuid, clip_id uuid, platform text, views int default 0, likes int default 0, comments int default 0, shares int default 0, retention_pct float default 0, created_at timestamptz default now(), updated_at timestamptz default now());
+create table if not exists "Metrics" (id uuid primary key default uuid_generate_v4(), project_id uuid, clip_id uuid, platform text, views int default 0, likes int default 0, comments int default 0, shares int default 0, retention_pct float default 0, source text default 'manual', external_id text, created_at timestamptz default now(), updated_at timestamptz default now());
+-- Creator's connected platform identities (Publish links jobs to these).
+-- Lowercase form lives in the backfill section below (the app's live tables
+-- are lowercase snake_case).
 -- Backfill for databases created before the KRITIKA merge. `create table if not exists`
 -- above is a no-op on existing tables, so add the new columns explicitly.
 alter table "Scripts" add column if not exists "version" int default 1;
@@ -27,6 +30,17 @@ alter table "Scripts" add column if not exists "supporting" jsonb default '{}';
 alter table "Hooks" add column if not exists "pattern_id" uuid references "HookPatterns"(id) on delete set null;
 alter table "Hooks" add column if not exists "category" text default 'statement';
 alter table "PublishJobs" add column if not exists "variant_id" uuid references "PlatformVariants"(id) on delete set null;
+alter table "PublishJobs" add column if not exists "account_id" uuid;
+alter table "Metrics" add column if not exists "source" text default 'manual';
+alter table "Metrics" add column if not exists "external_id" text;
+-- Live databases created by Sequelize sync use lowercase snake_case tables
+-- (connected_accounts, publish_jobs, metrics), not the PascalCase names
+-- above. These statements match that reality so a fresh SQL-editor setup and
+-- the running app agree on the same tables.
+create table if not exists "connected_accounts" (id uuid primary key default gen_random_uuid(), provider text not null, handle text not null, display_name text, access_token text, refresh_token text, expires_at timestamptz, meta jsonb default '{}', created_at timestamptz default now(), updated_at timestamptz default now());
+alter table "publish_jobs" add column if not exists "account_id" uuid;
+alter table "metrics" add column if not exists "source" text default 'manual';
+alter table "metrics" add column if not exists "external_id" text;
 -- Storage bucket (or create via Dashboard > Storage):
 insert into storage.buckets (id, name, public) values ('creator-assets','creator-assets', true) on conflict (id) do nothing;
 

@@ -146,13 +146,14 @@ router.post('/jobs', upload.single('video'), async (req, res) => {
 
 router.get('/jobs', async (req, res) => {
   const where = req.query.projectId ? { projectId: req.query.projectId } : {};
-  res.json(await ClipJob.findAll({ where, order: [['createdAt', 'DESC']], limit: 50 }));
+  const jobs = await ClipJob.findAll({ where, order: [['createdAt', 'DESC']], limit: 50 });
+  res.json(jobs.map(annotateFiles));
 });
 
 router.get('/jobs/:id', async (req, res) => {
   const job = await findJob(req, res);
   if (!job) return;
-  res.json(job);
+  res.json(annotateFiles(job));
 });
 
 router.delete('/jobs/:id', async (req, res) => {
@@ -340,15 +341,20 @@ router.patch('/jobs/:id/clips/:index', async (req, res) => {
   const next = { ...prev, ...overridesFrom(req.body || {}, {}) };
 
   // Keep the stored copy and the rendered filename in sync so downloads match.
+  // Only move the pointer when the file actually landed: a failed rename used
+  // to update `file` anyway, leaving a dangling pointer (download 404).
   if (next.title && next.title !== prev.title) {
     const dir = path.join(MEDIA_ROOT, job.id);
     const oldPath = path.join(dir, decodeURIComponent(String(prev.file).split('/').pop()));
     const newName = `${safeFilename(next.title).trim() || `clip-${index + 1}`}.mp4`;
     const newPath = path.join(dir, newName);
     if (oldPath !== newPath) {
-      try { if (fs.existsSync(oldPath)) fs.renameSync(oldPath, newPath); } catch { /* noop */ }
+      let moved = fs.existsSync(newPath);
+      try { if (fs.existsSync(oldPath) && !moved) { fs.renameSync(oldPath, newPath); moved = true; } } catch { /* noop */ }
+      if (moved) {
+        next.file = `/media/clippedai/${job.id}/${encodeURIComponent(newName)}`;
+      }
     }
-    next.file = `/media/clippedai/${job.id}/${encodeURIComponent(newName)}`;
     if (next.copy) next.copy = { ...next.copy, title: next.title };
   }
   if (next.copy) {
@@ -458,15 +464,18 @@ router.post('/jobs/:id/recopy', async (req, res) => {
       const oldPath = path.join(dir, decodeURIComponent(String(o.file).split('/').pop()));
       const newName = `${safeFilename(copy.title).trim() || `clip-${i + 1}`}.mp4`;
       const newPath = path.join(dir, newName);
+      let file = o.file;
       if (oldPath !== newPath) {
-        try { if (fs.existsSync(oldPath)) fs.renameSync(oldPath, newPath); } catch { /* noop */ }
+        let moved = fs.existsSync(newPath);
+        try { if (fs.existsSync(oldPath) && !moved) { fs.renameSync(oldPath, newPath); moved = true; } } catch { /* noop */ }
+        if (moved) file = `/media/clippedai/${job.id}/${encodeURIComponent(newName)}`;
       }
       outputs[i] = {
         ...o,
         title: copy.title,
         hookText: copy.hook,
         copy,
-        file: `/media/clippedai/${job.id}/${encodeURIComponent(newName)}`,
+        file,
       };
       if (o.clipId) {
         try {
@@ -508,5 +517,46 @@ router.delete('/jobs/:id/clips/:index', async (req, res) => {
   } catch { /* noop */ }
   res.json({ outputs: renumbered });
 });
+
+/**
+ * Same-origin file download for one rendered clip.
+ * The UI used to link straight at /media/… with a cross-origin `download`
+ * attribute, which browsers ignore cross-origin (frontend :5173 vs media
+ * :5000) — the "download" navigated instead, and ad-blockers/CORS failures
+ * looked like broken downloads. This endpoint answers from the API origin
+ * with Content-Disposition: attachment, so the save dialog always appears.
+ */
+router.get('/jobs/:id/clips/:index/file', async (req, res) => {
+  const job = await findJob(req, res);
+  if (!job) return;
+  const index = Number(req.params.index);
+  const outputs = job.outputs || [];
+  if (!Number.isInteger(index) || index < 0 || index >= outputs.length) {
+    return res.status(404).json({ error: 'clip not found' });
+  }
+  const out = outputs[index];
+  const name = decodeURIComponent(String(out.file || '').split('/').pop() || '');
+  const abs = path.join(MEDIA_ROOT, job.id, name);
+  if (!name || !fs.existsSync(abs)) {
+    return res.status(404).json({ error: 'Render file is gone (disk was cleared or the server restarted) — re-render this clip.' });
+  }
+  const downloadName = out.title ? `${safeFilename(out.title).trim() || `clip-${index + 1}`}.mp4` : name;
+  res.download(abs, downloadName);
+});
+
+/** Flag outputs whose files no longer exist (ephemeral disk / restart). */
+function annotateFiles(job) {
+  const json = job.toJSON();
+  const dir = path.join(MEDIA_ROOT, job.id);
+  let lost = 0;
+  json.outputs = (json.outputs || []).map((o) => {
+    const name = decodeURIComponent(String(o.file || '').split('/').pop() || '');
+    const missing = !name || !fs.existsSync(path.join(dir, name));
+    if (missing) lost += 1;
+    return { ...o, fileMissing: missing };
+  });
+  json.filesLost = lost > 0 && lost === (json.outputs || []).length && (json.outputs || []).length > 0;
+  return json;
+}
 
 module.exports = router;
