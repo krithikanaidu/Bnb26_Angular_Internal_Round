@@ -20,23 +20,23 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ React 18 + Vite SPA                                          │
-│ Dashboard │ Scripts │ Assets │ Studio (timeline) │ Publish │  │
-│ Insights │ Review                                            │
+│ React 19 + Vite 5 SPA (Tailwind 4)                           │
+│ Dashboard │ Assets │ Scripts │ Ideation │ Studio │ Publish │  │
+│ ClipAI │ Insights │ Calendar │ Video Editor                  │
 └────────────────────────────┬─────────────────────────────────┘
-                             │ REST + JWT (Axios)
+                             │ REST (Axios)
 ┌────────────────────────────▼─────────────────────────────────┐
 │ Node.js + Express 4 API  (orchestrator)                      │
 │ routes → services → Sequelize models                         │
-│ Agent Orchestrator · Job Queue (DB queue or BullMQ/Redis)    │
+│ ClipAI job queue (DB-backed, recoverStuckJobs on boot)       │
 └───┬──────────────┬───────────────┬───────────────┬───────────┘
     │              │               │               │
 ┌───▼─────────┐ ┌──▼───────────┐ ┌─▼────────────┐ ┌▼─────────────┐
-│ Supabase    │ │ LLM provider │ │ Python AI    │ │ Platform     │
-│ Postgres    │ │ OpenAI, or   │ │ worker  ⏳   │ │ connectors   │
-│ (+pgvector⏳)│ │ heuristic    │ │ WhisperX,    │ │ upload-post, │
-│ Storage     │ │ fallback ✅  │ │ FFmpeg,      │ │ platform     │
-│ Auth ⏳     │ │              │ │ embeddings   │ │ APIs, mock   │
+│ Supabase    │ │ LLM provider │ │ ClipAI engine│ │ Platform     │
+│ Postgres    │ │ Groq, OpenAI,│ │ ffmpeg,ffprobe│ │ connectors   │
+│ (+pgvector⏳)│ │ or heuristic│ │ STT (Whisper/ │ │ record-only  │
+│ Storage     │ │ fallback ✅  │ │ Groq), reframe│ │ today, ⏳ real│
+│ Auth ⏳     │ │              │ │ captions     │ │ APIs         │
 └─────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
 ```
 
@@ -69,17 +69,21 @@
 | ⏳ `services/agents/*` | One module per agent (see §4) |
 | ⏳ `connectors/*` | Platform adapters with a common interface |
 
-### 3.3 Python AI Worker ⏳
-A small service (FastAPI or a queue consumer) that handles compute-heavy tasks:
+### 3.3 ClipAI Engine ✅ (in-process, Node — no separate worker)
 
-| Task | Library | Output |
+Compute-heavy media work runs inside the backend via `ffmpeg-static` / `ffprobe-static`:
+
+| Task | Implementation | Output |
 |---|---|---|
-| `transcribe` | WhisperX or hosted Whisper API | Segments with word-level timestamps (optional diarization) |
-| `embed` | Sentence-transformers or a hosted embedding API | Vectors for beats and segments |
-| `render` | FFmpeg | MP4 from EDL (trim, crop 9:16, burn captions, overlays) |
-| `silence_detect` | FFmpeg `silencedetect` | Silence ranges for trim ops |
+| `inspect` | ffprobe | duration, streams, resolution, audio presence |
+| `loudness` | ffmpeg `volumedetect` | mean/max volume, real-silence decision |
+| `transcribe` | Whisper API (OpenAI or Groq) | Segments with word-level timestamps |
+| `render` | ffmpeg | MP4 from EDL (trim, crop 9:16, burn captions, overlays) |
+| `reframe` | ffmpeg frame sampling | 9:16 auto-reframe offsets per clip |
 
-The API submits jobs and polls; the worker writes results to Postgres and Storage.
+Jobs are rows in `ClipJob`; `clippedai/jobs.js` recovers jobs stuck in `processing` at boot.
+
+Embeddings remain ⏳ (they would need a hosted embedding API or a Python worker).
 
 ### 3.4 Data Stores
 | Store | Contents |
@@ -98,7 +102,7 @@ Agents are service modules coordinated by the orchestrator, not necessarily sepa
 |---|---|---|---|
 | **Ideation** | Niche, past metrics | Topic ideas with rationale | LLM, metrics SQL |
 | **Script/Hook** | Topic, tone | Hooks, script beats, caption, hashtags, CTA | LLM + `hook_patterns` retrieval |
-| **Footage Understanding** | Video asset | Transcript, segments, embeddings | WhisperX, embedding model |
+| **Footage Understanding** | Video asset | Transcript, segments | Whisper API (OpenAI / Groq) |
 | **Alignment** | Script beats + segments | Beat↔segment map, gap flags | Cosine similarity, optional LLM rerank |
 | **Clip** | Segments, alignment, signals | Ranked clips with reasons | Scoring function |
 | **Edit** | Clip | EDL operations | FFmpeg analysis, LLM |
@@ -129,7 +133,7 @@ Clip ─▶ Edit agent ─▶ EDL v1 ─▶ user edits ─▶ v2…vN ─▶ job
 ### 5.3 Adapt → Publish → Learn
 ```
 Clip + EDL ─▶ Adapt ─▶ PlatformVariants ─▶ PublishJob ─▶ Connector ─▶ Platform
-Platform ─▶ Metrics (polled or seeded) ─▶ Insights ─▶ Ideation
+Platform ─▶ Metrics (real connector reports only) ─▶ Insights ─▶ Ideation
 ```
 
 ---
@@ -165,7 +169,7 @@ See [`CONTENT_WORKFLOW.md`](./CONTENT_WORKFLOW.md).
 
 | Repo or tool | Mode | Reason |
 |---|---|---|
-| WhisperX | Library in Python worker | Word timestamps power alignment and clipping |
+| Whisper API | STT inside the ClipAI engine | Word timestamps power alignment and clipping |
 | AutoClip, OpenShorts, jBahr, ClippedAI | **Pattern reference** | Re-implement stages so output is editable EDL |
 | InsightCut | Reference | Output targets CapCut drafts, not our UI |
 | Twick / react-video-editor | Embed SDK ⏳ | Fits "AI edits stay editable" |
@@ -199,12 +203,15 @@ Verify licenses and maintenance status before embedding any code.
 
 | Capability | Primary | Fallback |
 |---|---|---|
-| Hooks and scripts | OpenAI | Template + pattern heuristic |
-| Transcription | WhisperX / Whisper API | Seeded demo transcript |
-| Alignment | Embedding similarity | Keyword-overlap heuristic |
+| Hooks and scripts | Groq, then OpenAI | Template + pattern heuristic (reported as `engine: "heuristic"`) |
+| Transcription | Whisper API (OpenAI, then Groq) | **None — the job fails with a real error** |
+| Alignment | Embedding similarity ⏳ | Keyword-overlap heuristic |
 | Rendering | FFmpeg | EDL-only preview (no file) |
-| Publishing | Real connector | Simulated publish with clear labeling |
-| Insights | Real aggregation | Seeded metrics |
+| Publishing | Real connector ⏳ | Record-only job, clearly labeled |
+| Insights | Real aggregation | Empty state — nothing is seeded |
+
+**Rule:** a fallback may derive real content from real input (e.g. a hook generated from your
+topic). A fallback may never fabricate a measurement (transcript, duration, score, metric).
 
 ---
 
@@ -212,8 +219,8 @@ Verify licenses and maintenance status before embedding any code.
 
 | Environment | Setup |
 |---|---|
-| Local | Vite `:5173`, Express `:5000`, worker on `:8000`, Supabase cloud project |
-| Demo / hosted | Frontend on Vercel or Netlify; API and worker on Render, Railway or Fly.io; Supabase managed |
+| Local | Vite `:5173`, Express `:5000`, Supabase cloud project (ffmpeg bundled via npm) |
+| Demo / hosted | Frontend on Vercel or Netlify; API on Render, Railway or Fly.io; Supabase managed |
 
 Env variables are documented in [`SETUP.md`](./SETUP.md).
 

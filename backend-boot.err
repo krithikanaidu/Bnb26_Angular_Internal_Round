@@ -1,0 +1,78 @@
+[supabase] SUPABASE_URL / SUPABASE_SERVICE_KEY missing in backend/.env - storage uploads will return metadata-only (no publicUrl). Set both to enable Supabase Storage.
+node:internal/process/promises:332
+    triggerUncaughtException(err, true /* fromPromise */);
+    ^
+
+Error
+    at Query.run (D:\ZZZZZZ\BIT AND BUILD OG\bit and build\backend\node_modules\sequelize\lib\dialects\postgres\query.js:50:25)
+    at D:\ZZZZZZ\BIT AND BUILD OG\bit and build\backend\node_modules\sequelize\lib\sequelize.js:315:28
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async PostgresQueryInterface.select (D:\ZZZZZZ\BIT AND BUILD OG\bit and build\backend\node_modules\sequelize\lib\dialects\abstract\query-interface.js:407:12)
+    at async Clip.findAll (D:\ZZZZZZ\BIT AND BUILD OG\bit and build\backend\node_modules\sequelize\lib\model.js:1140:21)
+    at async D:\ZZZZZZ\BIT AND BUILD OG\bit and build\backend\src\routes\content.js:102:17 {
+  name: 'SequelizeDatabaseError',
+  parent: error: column "meta" does not exist
+      at parseErrorMessage (D:\ZZZZZZ\BIT AND BUILD OG\bit and build\backend\node_modules\pg-protocol\dist\parser.js:306:11)
+      at Parser.handlePacket (D:\ZZZZZZ\BIT AND BUILD OG\bit and build\backend\node_modules\pg-protocol\dist\parser.js:143:27)
+      at Parser.parse (D:\ZZZZZZ\BIT AND BUILD OG\bit and build\backend\node_modules\pg-protocol\dist\parser.js:37:38)
+      at TLSSocket.<anonymous> (D:\ZZZZZZ\BIT AND BUILD OG\bit and build\backend\node_modules\pg-protocol\dist\index.js:12:42)
+      at TLSSocket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at TLSWrap.onStreamRead (node:internal/stream_base_commons:189:23) {
+    length: 105,
+    severity: 'ERROR',
+    code: '42703',
+    detail: undefined,
+    hint: undefined,
+    position: '213',
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: 'parse_relation.c',
+    line: '3716',
+    routine: 'errorMissingColumn',
+    sql: 'SELECT "id", "project_id" AS "projectId", "asset_id" AS "assetId", "title", "start_sec" AS "startSec", "end_sec" AS "endSec", "virality_score" AS "viralityScore", "hook_text" AS "hookText", "captions", "status", "meta", "created_at" AS "createdAt", "updated_at" AS "updatedAt", "project_id" FROM "clips" AS "Clip" ORDER BY "viralityScore" DESC LIMIT 20;',
+    parameters: undefined
+  },
+  original: error: column "meta" does not exist
+      at parseErrorMessage (D:\ZZZZZZ\BIT AND BUILD OG\bit and build\backend\node_modules\pg-protocol\dist\parser.js:306:11)
+      at Parser.handlePacket (D:\ZZZZZZ\BIT AND BUILD OG\bit and build\backend\node_modules\pg-protocol\dist\parser.js:143:27)
+      at Parser.parse (D:\ZZZZZZ\BIT AND BUILD OG\bit and build\backend\node_modules\pg-protocol\dist\parser.js:37:38)
+      at TLSSocket.<anonymous> (D:\ZZZZZZ\BIT AND BUILD OG\bit and build\backend\node_modules\pg-protocol\dist\index.js:12:42)
+      at TLSSocket.emit (node:events:508:28)
+      at addChunk (node:internal/streams/readable:559:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)
+      at Readable.push (node:internal/streams/readable:390:5)
+      at TLSWrap.onStreamRead (node:internal/stream_base_commons:189:23) {
+    length: 105,
+    severity: 'ERROR',
+    code: '42703',
+    detail: undefined,
+    hint: undefined,
+    position: '213',
+    internalPosition: undefined,
+    internalQuery: undefined,
+    where: undefined,
+    schema: undefined,
+    table: undefined,
+    column: undefined,
+    dataType: undefined,
+    constraint: undefined,
+    file: 'parse_relation.c',
+    line: '3716',
+    routine: 'errorMissingColumn',
+    sql: 'SELECT "id", "project_id" AS "projectId", "asset_id" AS "assetId", "title", "start_sec" AS "startSec", "end_sec" AS "endSec", "virality_score" AS "viralityScore", "hook_text" AS "hookText", "captions", "status", "meta", "created_at" AS "createdAt", "updated_at" AS "updatedAt", "project_id" FROM "clips" AS "Clip" ORDER BY "viralityScore" DESC LIMIT 20;',
+    parameters: undefined
+  },
+  sql: 'SELECT "id", "project_id" AS "projectId", "asset_id" AS "assetId", "title", "start_sec" AS "startSec", "end_sec" AS "endSec", "virality_score" AS "viralityScore", "hook_text" AS "hookText", "captions", "status", "meta", "created_at" AS "createdAt", "updated_at" AS "updatedAt", "project_id" FROM "clips" AS "Clip" ORDER BY "viralityScore" DESC LIMIT 20;',
+  parameters: {}
+}
+
+Node.js v25.2.0

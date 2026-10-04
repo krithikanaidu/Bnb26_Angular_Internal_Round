@@ -17,6 +17,9 @@ build/
 frontend/dist/
 .vite/
 
+# ── ClipAI render outputs (large mp4s, per-job) ──
+backend/media/
+
 # ── Logs / debug ──
 logs/
 *.log

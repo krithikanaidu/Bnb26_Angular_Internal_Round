@@ -10,17 +10,21 @@
     "db:sync": "node src/sync.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.44.0",
     "axios": "^1.7.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-validator": "^7.1.1",
+    "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0",
+    "form-data": "^4.0.6",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
     "pg": "^8.12.0",
     "pg-hstore": "^2.3.4",
     "sequelize": "^6.37.3",
-    "@supabase/supabase-js": "^2.44.0"
+    "yt-dlp-exec": "^1.0.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"

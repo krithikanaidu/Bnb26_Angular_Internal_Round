@@ -46,7 +46,7 @@ Each project (one content piece) carries a `status` from this enum. The Dashboar
 |---|---|
 | **Goal** | Get raw footage into the system and understood |
 | **User actions** | Upload video/audio (and optional b-roll images) |
-| **System actions** | Store in Supabase Storage; create Asset; transcribe ⏳ (seeded today); embed ⏳ |
+| **System actions** | Store in Supabase Storage; create Asset with ffprobe-measured metadata; transcribe via ClipAI (real STT); embed ⏳ |
 | **Exit trigger** | At least one video asset has a transcript |
 | **Outputs** | Asset, TranscriptSegments, embeddings |
 | **Screens** | Assets page |
@@ -93,7 +93,7 @@ Solo creators can skip this stage; the transition `editing → scheduled` is all
 | | |
 |---|---|
 | **Goal** | Post and track the results |
-| **System actions** | Connector posts (real for one platform, simulated for others); status per platform; metrics collected (polled or seeded) |
+| **System actions** | Publish job recorded with status per platform; metrics collected only when a real connector reports them |
 | **Exit trigger** | At least one publish job succeeded |
 | **Outputs** | Post IDs/URLs, Metric rows |
 | **Screens** | Publish status, Dashboard |
@@ -170,10 +170,10 @@ MVP: single role (owner). Role model is documented here so the schema (`workspac
 | Failure | Behavior |
 |---|---|
 | Upload interrupted | Asset marked `failed`; retry button |
-| Transcription fails | Job retried up to 3 times; fall back to seeded transcript in demo mode |
+| Transcription fails | Job marked `failed` with the real error; retry. **No fabricated transcript** |
 | Render fails | Show the error; EDL stays editable; retry |
 | Publish fails | Job `failed` with error; one-click retry or reschedule |
-| Metrics unavailable | Show "no data yet"; seed data labeled as demo |
+| Metrics unavailable | Show "no data yet" — nothing is seeded or simulated |
 
 No failure may lose user edits: the EDL version history is the source of truth.
 
