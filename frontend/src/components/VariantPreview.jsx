@@ -4,10 +4,15 @@ import { useEffect, useState } from 'react';
 // overlay + editable caption/title/hashtags with live counters + warnings.
 // Controlled-ish: { variant, onSave(id, draft), onSchedule(variant, datetime) }.
 export default function VariantPreview({ variant, onSave, onSchedule }) {
-  const preset = variant.preset || {};
-  const maxCaption = preset.caption?.max_chars ?? 2200;
-  const maxTitle = preset.caption?.title_max_chars ?? null;
-  const tagRange = preset.hashtags ?? { min: 0, max: 5 };
+  const preset = variant.preset || null;
+  // No invented platform limits. These used to fall back to 2200 chars / 0-5
+  // tags / a 10%-15% safe zone, which contradicted the real presets (X is 280
+  // chars, Shorts 5000) — so a user on X was shown "45/2200" and never warned
+  // about the actual limit. When the preset is absent we say so.
+  const maxCaption = preset?.caption?.max_chars ?? null;
+  const maxTitle = preset?.caption?.title_max_chars ?? null;
+  const tagRange = preset?.hashtags ?? null;
+  const requiredTags = Array.isArray(preset?.hashtags?.required) ? preset.hashtags.required : [];
 
   const [caption, setCaption] = useState(variant.caption || '');
   const [title, setTitle] = useState(variant.title || '');
@@ -25,8 +30,9 @@ export default function VariantPreview({ variant, onSave, onSchedule }) {
     .map((t) => (t.startsWith('#') ? t : `#${t}`));
   const dirty = caption !== (variant.caption || '') || title !== (variant.title || '') || tags !== (variant.hashtags || []).join(' ');
   const warnings = variant.warnings || [];
-  const safe = preset.safe_zone || { top: 0.1, bottom: 0.15 };
-  const tall = (preset.aspect || '9:16') === '9:16';
+  const safe = preset?.safe_zone ?? null;
+  const aspect = preset?.aspect || variant.aspect || null;
+  const tall = aspect === '9:16';
   const reframe = variant.reframe || null;
 
   const save = async () => {
@@ -54,15 +60,18 @@ export default function VariantPreview({ variant, onSave, onSchedule }) {
       <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
         <div style={{
           position: 'relative', flexShrink: 0, width: tall ? 96 : 150,
-          aspectRatio: (preset.aspect || '9:16').replace(':', ' / '),
+          aspectRatio: aspect ? aspect.replace(':', ' / ') : '9 / 16',
           background: 'var(--paper-2)', border: '2px solid var(--ink)', borderRadius: 12, overflow: 'hidden',
         }}>
           <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', fontSize: 11, color: 'var(--ink-soft)' }}>preview</div>
-          <div style={{
-            position: 'absolute', left: 0, right: 0,
-            top: `${(safe.top || 0) * 100}%`, bottom: `${(safe.bottom || 0) * 100}%`,
-            border: '2px dashed var(--pink)', borderLeft: 0, borderRight: 0,
-          }} title="Safe zone — keep captions inside" />
+          {/* Only draw a safe zone when the preset actually defines one. */}
+          {safe && (
+            <div style={{
+              position: 'absolute', left: 0, right: 0,
+              top: `${(safe.top || 0) * 100}%`, bottom: `${(safe.bottom || 0) * 100}%`,
+              border: '2px dashed var(--pink)', borderLeft: 0, borderRight: 0,
+            }} title="Safe zone — keep captions inside" />
+          )}
         </div>
         <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }}>
           {(variant.actions || []).map((a, i) => <li key={i}><small>{a}</small></li>)}
@@ -86,19 +95,34 @@ export default function VariantPreview({ variant, onSave, onSchedule }) {
         </div>
       )}
 
-      {maxTitle && (
+      {maxTitle != null && (
         <div style={{ marginTop: 10 }}>
           <label>Title <span className="mut">({title.length}/{maxTitle})</span></label>
           <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={maxTitle + 20} />
         </div>
       )}
       <div style={{ marginTop: 10 }}>
-        <label>Caption <span className="mut">({caption.length}/{maxCaption})</span></label>
+        <label>
+          Caption{' '}
+          <span className="mut">
+            ({caption.length}
+            {maxCaption != null ? `/${maxCaption}` : ' — platform limit unavailable'})
+          </span>
+        </label>
         <textarea rows={3} value={caption} onChange={(e) => setCaption(e.target.value)} style={{ width: '100%' }} />
       </div>
       <div style={{ marginTop: 10 }}>
-        <label>Hashtags <span className="mut">({tagList.length} · wants {tagRange.min}–{tagRange.max}, space-separated)</span></label>
-        <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="#Shorts #saas #pricing" />
+        <label>
+          Hashtags{' '}
+          <span className="mut">
+            ({tagList.length}
+            {tagRange ? ` · platform wants ${tagRange.min}–${tagRange.max}, space-separated` : ' · no platform range available'})
+          </span>
+        </label>
+        <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder={requiredTags.length ? requiredTags.join(' ') : 'Space-separated hashtags'} />
+        {requiredTags.length > 0 && (
+          <div className="mut"><small>Required by this platform: {requiredTags.join(' ')}</small></div>
+        )}
       </div>
 
       <div className="row" style={{ marginTop: 12 }}>

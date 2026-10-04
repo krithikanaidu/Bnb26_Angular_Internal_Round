@@ -39,13 +39,15 @@ export default function ScriptStudio({
 
       onScript?.({
         id: data.id,
-        title: data.title || `${hook.text.slice(0, 45)}...`,
+        // No truncated-hook title. It used to store `${hook.text.slice(0,45)}...` as the
+        // script's real title, which was then persisted on the next PATCH.
+        title: data.title || '',
         body: data.content || data.body || '',
         content: data.content || data.body || '',
         beats: Array.isArray(data.beats) ? data.beats : [],
         supporting: data.supporting || {},
         version: Number(data.version) || 1,
-        engine: data.engine || 'heuristic',
+        engine: data.engine || null,
       });
     } catch (e) {
       setErr(e.response?.data?.error || 'Script generation failed. Please check the backend connection.');
@@ -98,7 +100,10 @@ export default function ScriptStudio({
               {hook.category || 'statement'}
             </span>
           </div>
-          {hook.score !== undefined && (
+          {/* Only shown for a hook the backend actually scored. A script loaded from
+          history has no scored hook, so this stays hidden rather than showing an
+          invented percentage. */}
+          {Number.isFinite(Number(hook.score)) && (
             <span className="pill">Strength {Math.round(Number(hook.score) * 100)}%</span>
           )}
         </div>
@@ -182,7 +187,7 @@ export default function ScriptStudio({
                       {copiedField === 'title' ? 'Copied' : 'Copy'}
                     </button>
                   </div>
-                  <div className="ia-support-val">{script.supporting.title || 'Untitled'}</div>
+                  <div className="ia-support-val">{script.supporting.title || '—'}</div>
                 </div>
 
                 <div className="ia-support-item">
@@ -196,7 +201,7 @@ export default function ScriptStudio({
                       {copiedField === 'caption' ? 'Copied' : 'Copy'}
                     </button>
                   </div>
-                  <div className="ia-support-val">{script.supporting.caption || 'No caption'}</div>
+                  <div className="ia-support-val">{script.supporting.caption || '—'}</div>
                 </div>
 
                 <div className="ia-support-item">
@@ -229,7 +234,7 @@ export default function ScriptStudio({
                       {copiedField === 'cta' ? 'Copied' : 'Copy'}
                     </button>
                   </div>
-                  <div className="ia-support-val">{script.supporting.cta || 'Follow for more'}</div>
+                  <div className="ia-support-val">{script.supporting.cta || '— no CTA generated'}</div>
                 </div>
               </div>
 

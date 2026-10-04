@@ -68,7 +68,7 @@ export default function HookGenerator({
       });
       const generated = Array.isArray(data?.hooks) ? data.hooks : [];
       setHooks(generated);
-      setEngine(data?.engine || 'heuristic');
+      setEngine(data?.engine || null);
       // If user had not picked a hook yet and hooks returned, auto-select first as candidate
       if (!pickedId && generated.length > 0) {
         onPick?.({ ...generated[0], topic: cleanTopic });

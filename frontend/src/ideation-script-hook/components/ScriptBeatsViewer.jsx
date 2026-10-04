@@ -84,12 +84,12 @@ export default function ScriptBeatsViewer({ script, onScriptUpdate }) {
             </div>
           ) : (
             beats.map((b, i) => {
-              const weight = Number(b.importance) || 0.7;
+              const weight = Number.isFinite(Number(b.importance)) ? Number(b.importance) : null;
               return (
                 <div key={b.idx ?? i} className="ia-beat-item">
                   <div className="ia-beat-badge-col">
                     <span className="ia-beat-num">Beat {b.idx ?? i}</span>
-                    <span className="ia-beat-weight">Weight {weight.toFixed(1)}</span>
+                    <span className="ia-beat-weight">{weight == null ? 'Weight not scored' : `Weight ${weight.toFixed(1)}`}</span>
                   </div>
                   <div className="ia-beat-text-col">
                     <p className="ia-beat-text">{b.text}</p>

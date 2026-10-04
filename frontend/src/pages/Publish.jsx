@@ -17,6 +17,8 @@ export default function Publish() {
   const [trendTags, setTrendTags] = useState([]);
   const [pickedTags, setPickedTags] = useState([]);
   const [trendsBusy, setTrendsBusy] = useState(false);
+  const [trendsFailed, setTrendsFailed] = useState(false);
+  const [variantsError, setVariantsError] = useState(null);
   const [niche, setNiche] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -31,9 +33,15 @@ export default function Publish() {
     if (!clipId) { setVariants([]); setTrendTags([]); setPickedTags([]); setTrendsMeta(null); setEdlMeta(null); return; }
     api.get(`/content/clips/${clipId}/variants`).then((r) => {
       setVariants(r.data);
-      const withEdl = r.data.find((v) => v.edlVersion != null);
+const withEdl = r.data.find((v) => v.edlVersion != null);
       if (withEdl) setEdlMeta({ version: withEdl.edlVersion });
-    }).catch(() => {});
+      // A failed load used to be swallowed, and the page then stated "No variants
+      // yet for this clip" — an affirmative claim the request never supported.
+      setVariantsError(null);
+    }).catch((e) => {
+      setVariants([]);
+      setVariantsError(e.response?.data?.error || 'Could not load variants for this clip.');
+    });
   }, [clipId]);
 
   const clip = clips.find((c) => c.id === clipId);
@@ -47,7 +55,9 @@ export default function Publish() {
       setPickedTags((data.tags || []).slice(0, 6));
       setTrendsMeta({ source: data.source });
     } catch {
-      setTrendsMeta({ source: 'unavailable — server will use evergreen tags' });
+      // Do not assert what the server "will use" — that is an unverifiable claim.
+      setTrendsMeta(null);
+      setTrendsFailed(true);
     } finally { setTrendsBusy(false); }
   };
 
@@ -120,6 +130,7 @@ export default function Publish() {
         <div className="row">
           <button className="ghost" onClick={loadTrends} disabled={!clip || trendsBusy}>{trendsBusy ? 'Fetching…' : 'Fetch trend tags'}</button>
           {trendsMeta && <span className="pill">source: {trendsMeta.source}</span>}
+          {trendsFailed && <span className="error-label">Trend fetch failed — adapt directly and the server will try on its own.</span>}
         </div>
         {trendTags.length > 0 && (
           <div className="row" style={{ marginTop: 8 }}>
@@ -154,7 +165,11 @@ export default function Publish() {
         </>
       )}
       {clipId && !variants.length && !busy && (
-        <div className="card"><p className="mut">No variants yet for this clip — adapt above, or pick another clip.</p></div>
+        <div className="card">
+          {variantsError
+            ? <p className="error-text">⚠ {variantsError}</p>
+            : <p className="mut">No variants yet for this clip — adapt above, or pick another clip.</p>}
+        </div>
       )}
 
       <h2>Scheduled / published</h2>
