@@ -74,7 +74,7 @@ function JobCard({ job, onDelete, onChanged }) {
     <div className="card">
       <div className="row" style={{ justifyContent: 'space-between' }}>
         <div>
-          <b>{full.sourceName || 'Upload'}</b>
+          <b>{full.sourceName || 'Untitled job'}</b>
           <div className="mut"><small>{new Date(full.createdAt).toLocaleString()} · {full.outputs?.length || 0} shorts</small></div>
         </div>
         <div className="row">
@@ -94,7 +94,7 @@ function JobCard({ job, onDelete, onChanged }) {
         </div>
       )}
       {full.status === 'error' && (
-        <pre style={{ marginTop: 10 }}>{full.error || 'Render failed. Check backend logs (ffmpeg/transcription).'}</pre>
+        <pre style={{ marginTop: 10 }}>{full.error || 'The job failed without reporting a reason — check the backend logs (ffmpeg / transcription).'}</pre>
       )}
       {!!full.outputs?.length && (
         <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(240px,1fr))', marginTop: 12 }}>
@@ -123,21 +123,36 @@ export default function ClipAI() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [engines, setEngines] = useState(null);
+  const [scoreWeights, setScoreWeights] = useState(null);
+  const [healthState, setHealthState] = useState('loading'); // loading | ok | unavailable
+  const [projectsError, setProjectsError] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [j, p, h] = await Promise.all([
+      // Projects and health are loaded independently so one failure cannot blank
+      // out the other. A failed /projects used to become [], which silently hid
+      // every project and let clips be created unattached.
+      const [j, pRes, hRes] = await Promise.allSettled([
         listJobs(),
-        api.get('/projects').catch(() => ({ data: [] })),
-        getHealth().catch(() => null),
+        api.get('/projects'),
+        getHealth(),
       ]);
-      setJobs(j);
-      setProjects(p.data || []);
-      if (h?.engines) setEngines(h.engines);
+      if (j.status === 'fulfilled') setJobs(j.value);
+      else setError('Could not load jobs — is the backend running?');
+
+      if (pRes.status === 'fulfilled') { setProjects(pRes.value.data || []); setProjectsError(false); }
+      else setProjectsError(true);
+
+      if (hRes.status === 'fulfilled' && hRes.value?.engines) {
+        setEngines(hRes.value.engines);
+        setScoreWeights(hRes.value.scoreWeights || null);
+        setHealthState('ok');
+      } else setHealthState('unavailable');
     } catch (e) {
       setError('Backend unreachable — start it with `npm run dev` in backend/ (needs Supabase DB).');
+      setHealthState('unavailable');
     }
   }, []);
 
@@ -202,9 +217,23 @@ export default function ClipAI() {
           </p>
         </div>
         <span className="pill">
-          {engines
-            ? `${engines.whisper ? '🎙 Whisper' : '📝 Heuristic subs'} · ${engines.titles === 'groq' ? '⚡ Groq titles' : engines.titles === 'openai' ? '✨ AI titles' : '💡 Heuristic titles'}`
-            : 'No API keys needed · heuristic fallback built in'}
+          {healthState === 'loading' && 'Checking engines…'}
+          {healthState === 'unavailable' && '⚠ Engine status unavailable'}
+          {healthState === 'ok' && engines && (() => {
+            // Report the provider the backend actually resolved. This used to read
+            // a non-existent `engines.titles`, so it always claimed "Heuristic
+            // titles" even with Groq/OpenAI live, and on a failed health request it
+            // asserted "No API keys needed" — a capability claim from a network error.
+            const sttLabel = engines.stt?.name
+              ? `🎙 ${engines.stt.name}`
+              : (engines.whisper ? '🎙 STT ready' : '📝 No speech-to-text key');
+            const copy = engines.titles || engines.copy;
+            const copyLabel = copy === 'groq' ? '⚡ Groq copy'
+              : copy === 'openai' ? '✨ AI copy'
+                : copy === 'heuristic' ? '💡 Heuristic copy'
+                  : `💡 ${copy || 'unknown'} copy`;
+            return `${sttLabel} · ${copyLabel}`;
+          })()}
         </span>
       </div>
 
@@ -273,7 +302,7 @@ export default function ClipAI() {
                 )}
                 <div>
                   <b style={{ fontSize: 13 }}>{ytMeta.title}</b>
-                  <div className="mut"><small>{ytMeta.uploader || 'YouTube'} · {fmtTime(ytMeta.duration)} long</small></div>
+                  <div className="mut"><small>{ytMeta.uploader || 'Unknown channel'} · {fmtTime(ytMeta.duration)} long</small></div>
                   <span className="pill" style={{ marginTop: 4, display: 'inline-block' }}>✓ Ready to clip</span>
                 </div>
               </div>
@@ -290,10 +319,22 @@ export default function ClipAI() {
             </div>
           )}
           <div className="row" style={{ marginTop: 12 }}>
-            <select value={projectId} onChange={(e) => setProjectId(e.target.value)} style={{ maxWidth: 220 }}>
-              <option value="">No project (standalone)</option>
+            {/* Standalone is a real option, but only offer it as a clean choice —
+                when /projects failed we must not present an empty list as if the
+                workspace genuinely has no projects. */}
+            <select
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              style={{ maxWidth: 220 }}
+              disabled={projectsError}
+              aria-label="Project"
+            >
+              {projectsError
+                ? <option value="">⚠ Projects failed to load</option>
+                : <option value="">No project (standalone)</option>}
               {projects.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
             </select>
+            {projectsError && <span className="error-label">Could not load projects — retry or run standalone.</span>}
           </div>
         </div>
 
@@ -327,9 +368,12 @@ export default function ClipAI() {
           {error && <pre style={{ marginTop: 10 }}>{error}</pre>}
           <p className="mut" style={{ marginTop: 10 }}>
             <small>
-              Pipeline: transcribe (Whisper API or offline heuristic) → engagement score
-              (density 45% · hooks 30% · length 25%) → trim → 9:16 → subtitles → viral title.
-              Renders run one at a time on the backend; transcription is cached per job.
+              Pipeline: transcribe ({engines?.stt?.name || 'no speech-to-text key — set GROQ_API_KEY or OPENAI_API_KEY'})
+              → clip score → trim → 9:16 → subtitles → title.
+              {scoreWeights
+                ? ` Score blend: ${Object.entries(scoreWeights).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(' · ')}.`
+                : ''}
+              {' '}Renders run one at a time on the backend; transcription is cached per job.
             </small>
           </p>
         </div>

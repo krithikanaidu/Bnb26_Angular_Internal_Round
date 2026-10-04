@@ -41,6 +41,23 @@ const OPENER_PATTERNS = [
   /\?/,
 ];
 
+/**
+ * Relative weights of each signal in the final clip score.
+ *
+ * Exported, and surfaced on GET /api/health, so the UI can describe the real
+ * algorithm. The frontend used to hardcode "density 45% / hooks 30% / length
+ * 25%", which described only the legacy engagementScore() helper and not this
+ * blend — so the app documented a scoring model it did not use.
+ * Must sum to 1.
+ */
+const CLIPAI_SCORE_WEIGHTS = Object.freeze({
+  engagement: 0.28,
+  cohesion: 0.24,
+  hook: 0.24,
+  speech: 0.14,
+  opener: 0.10,
+});
+
 const tokenize = (text) => String(text || '')
   .toLowerCase()
   .replace(/[^a-z0-9'\s$%]/g, ' ')
@@ -261,11 +278,14 @@ function selectClips(transcript, { minLen, maxLen, maxClips }) {
       opener: openerScore(words, w.start_time),
       speech: speechScore(words, w.start_time, w.end_time),
     };
-    const score = parts.engagement * 0.28
-      + parts.cohesion * 0.24
-      + parts.hook * 0.24
-      + parts.speech * 0.14
-      + parts.opener * 0.10;
+    // Weights live in CLIPAI_SCORE_WEIGHTS so the UI can display the real
+    // algorithm instead of a hardcoded guess. Keep them summing to 1.
+    const W = CLIPAI_SCORE_WEIGHTS;
+    const score = parts.engagement * W.engagement
+      + parts.cohesion * W.cohesion
+      + parts.hook * W.hook
+      + parts.speech * W.speech
+      + parts.opener * W.opener;
     return {
       start_time: +w.start_time.toFixed(2),
       end_time: +w.end_time.toFixed(2),
@@ -299,6 +319,7 @@ function selectClips(transcript, { minLen, maxLen, maxClips }) {
 
 module.exports = {
   engagementScore,
+  CLIPAI_SCORE_WEIGHTS,
   selectClips,
   candidateWindows,
   buildSentences,

@@ -29,6 +29,7 @@ app.use('/media', express.static(path.join(__dirname, '..', 'media')));
 app.get('/api/health', (req, res) => {
   const { sttProvider, hasStt } = require('./clippedai/keys');
   const { resolveProvider } = require('./services/llmProvider');
+  const { CLIPAI_SCORE_WEIGHTS } = require('./clippedai/score');
   const stt = sttProvider();
   const p = resolveProvider();
   res.json({
@@ -42,9 +43,16 @@ app.get('/api/health', (req, res) => {
       // Name + model only — never the key itself.
       stt: stt ? { name: stt.name, model: stt.model } : null,
       copy: p.provider,
+      // Titles/hooks/scripts all run through the same copy engine. The frontend
+      // used to read a non-existent `engines.titles`, so it always rendered
+      // "Heuristic titles" even when Groq/OpenAI was live.
+      titles: p.provider,
       trends: p.provider,
       reframe: 'auto',
     },
+    // The real blend, so the UI can describe the algorithm it actually runs
+    // instead of hardcoded percentages describing a different one.
+    scoreWeights: CLIPAI_SCORE_WEIGHTS,
   });
 });
 app.use('/api/projects', require('./routes/projects'));
