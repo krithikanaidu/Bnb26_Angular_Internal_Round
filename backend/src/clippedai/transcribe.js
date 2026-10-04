@@ -186,10 +186,15 @@ function noSpeechMessage(reason, detail) {
     return 'This file has no audio track at all, so there is nothing to transcribe or clip. '
       + 'Re-upload a version that contains audio (screen recordings must include narration or system audio).';
   }
-  if (reason === 'digital-silence' || reason === 'unmeasurable') {
+  if (reason === 'digital-silence') {
     return 'This video\u2019s audio track is silent (no speech, no music \u2014 pure digital silence), '
       + 'so there is nothing to transcribe. Add narration or audio and re-upload. '
       + 'Rendering anyway would only burn invented captions onto the clips.';
+  }
+  if (reason === 'unmeasurable') {
+    return 'Could not read the audio level for this file, so its loudness could not be checked. '
+      + 'This is a probe failure, not proof that the video is silent \u2014 re-run the job. '
+      + 'If it keeps failing, the uploaded file may be truncated or corrupt.';
   }
   if (reason === 'repetitive' || reason === 'single-word-loop' || reason === 'filler-loop') {
     return `No intelligible speech in this video \u2014 the speech-to-text engine only produced a repeated filler phrase (${detail}). `

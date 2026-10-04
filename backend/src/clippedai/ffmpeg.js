@@ -66,7 +66,14 @@ async function probeStreams(filePath) {
   }
 }
 
-/** Run a binary and collect stdout, resolving with '' on any failure. */
+/**
+ * Run a binary and collect its output, resolving with '' on any failure.
+ *
+ * Collects BOTH stdout and stderr on purpose. ffmpeg writes its diagnostics —
+ * including everything `-af volumedetect` reports — to stderr, while `-f null`
+ * sends the real media stream nowhere. Reading only stdout made the loudness
+ * numbers unparseable, so every file looked like digital silence.
+ */
 function capture(cmd, args, { timeout = 120000 } = {}) {
   return new Promise((resolve) => {
     let child;
@@ -81,6 +88,7 @@ function capture(cmd, args, { timeout = 120000 } = {}) {
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
     const timer = setTimeout(() => { try { child.kill(); } catch { /* noop */ } }, timeout);
     child.stdout?.on('data', (d) => { out += d.toString(); });
+    child.stderr?.on('data', (d) => { out += d.toString(); });
     child.on('error', () => { clearTimeout(timer); finish(''); });
     child.on('close', () => { clearTimeout(timer); finish(out); });
   });
@@ -133,16 +141,27 @@ const SILENCE_DB_FS = -50;
 /**
  * True when the file carries no usable sound: no audio stream at all, or a
  * stream whose peak level sits under the silence floor.
+ *
+ * A level that could not be read (`max_volume` unparsed) is reported as
+ * `unmeasured`, NOT as silence. Silently treating "we could not measure this" as
+ * "this is silent" rejected every upload whenever volumedetect output was
+ * unavailable. The speech-to-text result is the real arbiter of whether there is
+ * speech, so an unreadable level must never block transcription on its own.
  */
 async function isSilentOrMute(filePath) {
   const audio = await probeAudio(filePath);
-  if (!audio.hasAudio) return { silent: true, reason: 'no-audio-stream', audio };
+  if (!audio.hasAudio) return { silent: true, measured: true, reason: 'no-audio-stream', audio };
   const level = await measureLoudness(filePath);
   const peak = level.maxVolume;
-  const silent = peak == null || peak < SILENCE_DB_FS;
+  const measured = Number.isFinite(peak);
+  if (!measured) {
+    return { silent: false, measured: false, reason: 'unmeasured', audio, loudness: level };
+  }
+  const silent = peak < SILENCE_DB_FS;
   return {
     silent,
-    reason: silent ? (peak == null ? 'unmeasurable' : 'digital-silence') : 'has-sound',
+    measured: true,
+    reason: silent ? 'digital-silence' : 'has-sound',
     audio,
     loudness: level,
   };
