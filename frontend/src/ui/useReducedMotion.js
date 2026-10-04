@@ -29,12 +29,12 @@ export function useReducedMotion() {
 export function useFinePointer() {
   const [fine, setFine] = useState(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return false;
-    return window.matchMedia('(fine-pointer)').matches;
+    return window.matchMedia('(pointer: fine)').matches;
   });
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
-    const mq = window.matchMedia('(fine-pointer)');
+    const mq = window.matchMedia('(pointer: fine)');
     const handler = (e) => setFine(e.matches);
     setFine(mq.matches);
     mq.addEventListener('change', handler);

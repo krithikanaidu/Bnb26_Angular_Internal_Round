@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LineChart, Trophy, Layers } from 'lucide-react';
+import { LineChart, Trophy, Layers, Heart, MessageCircle } from 'lucide-react';
 
 import { api } from '../lib/api';
 import { PaperPage, PageHead, Panel, StatTile, EmptyState, ErrorNote, LoadingNote, UnderlineDoodle, NO_VALUE, Bar, DataRow } from '../ui/AppKit';
@@ -150,8 +150,12 @@ export default function Insights() {
                 </div>
                 <Bar value={Number(m.views) || 0} max={peakViews || 1} className="mt-2" />
                 <div className="bb-row mt-2">
-                  <span className="pill">♥ {m.likes ?? NO_VALUE_DASH}</span>
-                  <span className="pill">💬 {m.comments ?? NO_VALUE_DASH}</span>
+                  <span className="pill inline-flex items-center gap-1.5">
+                    <Heart className="w-3 h-3 flex-none" /> {m.likes ?? NO_VALUE_DASH}
+                  </span>
+                  <span className="pill inline-flex items-center gap-1.5">
+                    <MessageCircle className="w-3 h-3 flex-none" /> {m.comments ?? NO_VALUE_DASH}
+                  </span>
                 </div>
               </li>
             ))}

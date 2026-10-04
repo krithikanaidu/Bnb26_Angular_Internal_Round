@@ -131,5 +131,5 @@ export function SkyBackground({ className = '' }) {
  * graph grid, so content sits on graph paper rather than on a flat void.
  */
 export function GridPaperBg({ className = '' }) {
-  return <div className={`absolute inset-0 bg-grid-paper ${className}`} style={{ background: 'var(--cream)' }} aria-hidden="true" />;
+  return <div className={`absolute inset-0 bg-grid-paper ${className}`} style={{ backgroundColor: 'var(--cream)' }} aria-hidden="true" />;
 }

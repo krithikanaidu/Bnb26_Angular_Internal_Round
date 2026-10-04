@@ -46,10 +46,27 @@ export function useSmoothScroll() {
     };
     raf = requestAnimationFrame(loop);
 
+    // Native hash jumps leave Lenis's internal position stale, so the next
+    // raf snaps the page back. Intercept anchor clicks and route them
+    // through lenis.scrollTo instead.
+    const onAnchorClick = (e) => {
+      const link = e.target.closest?.('a[href^="#"]');
+      if (!link) return;
+      const id = link.getAttribute('href').slice(1);
+      if (!id) return;
+      const el = document.getElementById(id);
+      if (!el) return;
+      e.preventDefault();
+      if (lenis) lenis.scrollTo(el, { offset: -84, duration: 1.1 });
+      else el.scrollIntoView({ behavior: 'smooth' });
+    };
+    document.addEventListener('click', onAnchorClick);
+
     const onScroll = () => ScrollTrigger.update();
     window.addEventListener('scroll', onScroll, { passive: true });
 
     return () => {
+      document.removeEventListener('click', onAnchorClick);
       window.removeEventListener('scroll', onScroll);
       cancelAnimationFrame(raf);
       lenis?.destroy();

@@ -7,6 +7,9 @@ import {
   unitsToTimeUs,
   TimelineBridge,
   TimelineScrollbars,
+  TIMELINE_SCALE_CHANGED,
+  TIMELINE_OFFSET_CANVAS_LEFT,
+  ITimelineScaleState,
 } from "@openvideo/timeline";
 import CanvasTimeline from "./items/timeline";
 import { useStudioStore } from "@/stores/studio-store";
@@ -17,7 +20,6 @@ import { Audio, Image, Text, Video, Caption, Helper, Track, Transition, Backdrop
 import PreviewTrackItem from "./items/preview-drag-item";
 import { useTimelineOffsetX } from "../hooks/use-timeline-offset";
 import { addStudioSync } from "./studio-to-store-sync";
-import { TIMELINE_SCALE_CHANGED } from "@openvideo/timeline";
 import Effect from "./items/effect";
 import { useTimelineContextMenu, TimelineContextMenuProvider } from "./timeline-context-menu";
 import Shape from "./items/shape";
@@ -37,14 +39,11 @@ CanvasTimeline.registerItems({
   Backdrop,
 });
 
-const EMPTY_SIZE = { width: 0, height: 0 };
-
 const Timeline = () => {
   // prevent duplicate scroll events
   const [scrollLeft, setScrollLeft] = useState(0);
   const canvasElRef = useRef<HTMLCanvasElement>(null);
   const canvasRef = useRef<CanvasTimeline | null>(null);
-  const horizontalScrollbarVpRef = useRef<HTMLDivElement>(null);
   const currentTimeUs = useStore(projectStore, (s) => s.currentTime);
   const durationUs = useStore(projectStore, (s) => s.settings.duration);
   const { studio } = useStudioStore();
@@ -53,9 +52,6 @@ const Timeline = () => {
 
   const timelineOffsetX = useTimelineOffsetX();
   const timelineContainerRef = useRef<HTMLDivElement>(null);
-  const onMouseDown = () => {};
-  const onMouseMove = () => {};
-  const onMouseOut = () => {};
 
   const [timeline, setTimeline] = useState<CanvasTimeline | null>(null);
 
@@ -73,35 +69,32 @@ const Timeline = () => {
       }
     },
   });
+  // Keep the playhead visible: scroll when it crosses either viewport edge.
+  // Playhead position in canvas space: TIMELINE_OFFSET_CANVAS_LEFT + units - scrollLeft.
   useEffect(() => {
-    const position = timeUsToUnits(currentTimeUs, scale.zoom);
+    const canvas = canvasRef.current;
     const canvasEl = canvasElRef.current;
-    const horizontalScrollbar = horizontalScrollbarVpRef.current;
+    if (!canvas || !canvasEl) return;
 
-    if (!canvasEl || !horizontalScrollbar) return;
+    const position = timeUsToUnits(currentTimeUs, scale.zoom);
+    const viewportWidth = canvasEl.clientWidth;
+    const playheadX = TIMELINE_OFFSET_CANVAS_LEFT + position - scrollLeft;
 
-    const canvasBoudingX = canvasEl.getBoundingClientRect().x + canvasEl.clientWidth;
-    const playHeadPos = position - scrollLeft + 40;
-    if (playHeadPos >= canvasBoudingX) {
-      const scrollDivWidth = horizontalScrollbar.clientWidth;
-      const totalScrollWidth = horizontalScrollbar.scrollWidth;
-      const currentPosScroll = horizontalScrollbar.scrollLeft;
-      const availableScroll = totalScrollWidth - (scrollDivWidth + currentPosScroll);
-      const scaleScroll = availableScroll / scrollDivWidth;
-      if (scaleScroll >= 0) {
-        if (scaleScroll > 1)
-          horizontalScrollbar.scrollTo({
-            left: currentPosScroll + scrollDivWidth,
-          });
-        else
-          horizontalScrollbar.scrollTo({
-            left: totalScrollWidth - scrollDivWidth,
-          });
-      }
+    let targetScrollLeft: number | null = null;
+    if (playheadX >= viewportWidth) {
+      targetScrollLeft = position - viewportWidth + TIMELINE_OFFSET_CANVAS_LEFT + 80;
+    } else if (playheadX < TIMELINE_OFFSET_CANVAS_LEFT && scrollLeft > 0) {
+      targetScrollLeft = Math.max(0, position - 80);
     }
-  }, [currentTimeUs]);
-  const onResizeCanvas = (payload: { width: number; height: number }) => {};
 
+    if (targetScrollLeft !== null) {
+      // setViewportPos clamps against the content bounds
+      canvas.setViewportPos(
+        TIMELINE_OFFSET_CANVAS_LEFT - targetScrollLeft,
+        canvas.viewportTransform?.[5] ?? 0,
+      );
+    }
+  }, [currentTimeUs, scale.zoom, scrollLeft]);
   useEffect(() => {
     const timelineContainerEl = timelineContainerRef.current;
     if (!timelineContainerEl) return;
@@ -148,7 +141,6 @@ const Timeline = () => {
       },
       selectionColor: "rgba(0, 216, 214,0.1)",
       selectionBorderColor: "rgba(0, 216, 214,1.0)",
-      onResizeCanvas,
       scale: scale,
       duration: durationUs,
       spacing: {
@@ -208,13 +200,6 @@ const Timeline = () => {
       },
     });
 
-    canvas.emitter.on(TIMELINE_SCALE_CHANGED, (data) => {
-      const newScale = data.payload.scale;
-      if (newScale.zoom !== scale.zoom) {
-        setScale(newScale);
-      }
-    });
-
     canvasRef.current = canvas;
 
     const bridge = new TimelineBridge(core, canvas);
@@ -236,6 +221,30 @@ const Timeline = () => {
       canvas.purge();
     };
   }, []);
+
+  // Canvas-initiated zoom (ctrl+wheel) -> store
+  useEffect(() => {
+    if (!timeline) return;
+
+    const handleScaleChanged = (data: { payload: { scale: ITimelineScaleState } }) => {
+      const currentScale = projectStore.getState().scale;
+      if (data.payload.scale.zoom !== currentScale.zoom) {
+        setScale(data.payload.scale);
+      }
+    };
+
+    timeline.emitter.on(TIMELINE_SCALE_CHANGED, handleScaleChanged);
+    return () => {
+      timeline.emitter.off(TIMELINE_SCALE_CHANGED, handleScaleChanged);
+    };
+  }, [timeline, setScale]);
+
+  // Store zoom -> canvas (header controls, hotkeys, ruler-area wheel)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.syncScale({ scale });
+  }, [scale]);
 
   useEffect(() => {
     if (!studio || !timeline) return;
@@ -306,28 +315,18 @@ const Timeline = () => {
 
   const onRulerScroll = (newScrollLeft: number) => {
     const canvas = canvasRef.current;
+
+    let clamped = Math.max(0, newScrollLeft);
     if (canvas) {
-      canvas.scrollTo({ scrollLeft: newScrollLeft });
+      // bounding.width is the content right edge; +100 matches the canvas wheel
+      // handler's extra scroll margin
+      const maxScrollLeft = Math.max(0, (canvas.bounding?.width ?? 0) + 100 - canvas.width);
+      clamped = Math.min(clamped, maxScrollLeft);
+      canvas.scrollTo({ scrollLeft: clamped });
     }
 
-    if (horizontalScrollbarVpRef.current) {
-      horizontalScrollbarVpRef.current.scrollLeft = newScrollLeft;
-    }
-
-    setScrollLeft(newScrollLeft);
+    setScrollLeft(clamped);
   };
-
-  useEffect(() => {
-    const availableScroll = horizontalScrollbarVpRef.current?.scrollWidth;
-    if (!availableScroll || !canvasRef.current) return;
-
-    canvasRef.current.syncScale({ scale });
-
-    const canvasWidth = canvasRef.current.width;
-    if (availableScroll < canvasWidth + scrollLeft) {
-      canvasRef.current.scrollTo({ scrollLeft: availableScroll - canvasWidth });
-    }
-  }, [scale]);
 
   useEffect(() => {
     const container = timelineContainerRef.current;
@@ -351,14 +350,19 @@ const Timeline = () => {
         const clampedZoom = Math.max(0.1, Math.min(10, newZoom));
 
         if (oldZoom !== clampedZoom) {
-          // Zoom-to-point: keep the content under the cursor at the same screen position
+          // Zoom-to-point: keep the content under the cursor at the same screen position.
+          // Content x (relative to time 0) = cursorX + scrollLeft - spacing.left.
+          const ratio = clampedZoom / oldZoom;
           const cursorX =
             e.clientX -
             (timelineContainerRef.current?.getBoundingClientRect().left ?? 0) -
             timelineOffsetX;
-          const newScrollLeft = (scrollLeft + cursorX) * (clampedZoom / oldZoom) - cursorX;
+          const newScrollLeft =
+            (scrollLeft + cursorX - TIMELINE_OFFSET_CANVAS_LEFT) * ratio +
+            TIMELINE_OFFSET_CANVAS_LEFT -
+            cursorX;
           setScale((prev) => ({ ...prev, zoom: clampedZoom }));
-          onRulerScroll(Math.max(0, newScrollLeft));
+          onRulerScroll(newScrollLeft);
         }
       } else {
         // Horizontal scroll only (timeline doesn't vertically scroll from ruler)
@@ -381,9 +385,6 @@ const Timeline = () => {
         id="timeline-container"
         data-timeline="true"
         className="flex border-t flex-col relative w-full h-full overflow-hidden bg-background"
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseOut={onMouseOut}
       >
         <Header scale={scale} setScale={setScale} />
         <Ruler

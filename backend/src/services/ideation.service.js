@@ -13,11 +13,26 @@ const CURIOSITY = /(\?|\bwhy\b|\bhow\b|\bsecret\b|\breason\b|\bhere's\b|\btill\b
 // ---------- engine ----------
 function engine() { return require('./llmProvider').resolveProvider().provider; }
 
-async function llmJson(system, user, fallbackFn) {
-  const { chatJson } = require('./llmProvider');
-  const { engine: eng, data } = await chatJson({ system, user, temperature: 0.8, json: true });
-  if (data) return { engine: eng, data };
-  return { engine: 'heuristic', data: fallbackFn() };
+async function llmJson(system, user, fallbackFn, { task = 'default', temperature = 0.4, maxTokens, validate } = {}) {
+  const { llmCascade } = require('../llm/client');
+  try {
+    const { engine: eng, data, route } = await llmCascade({
+      task,
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+      json: true, temperature, maxTokens, validate,
+    });
+    if (data) return { engine: eng, data, route };
+  } catch (e) {
+    console.warn(`[ideation] ${task} cascade failed:`, e.message);
+  }
+  return { engine: 'heuristic', data: fallbackFn(), route: 'heuristic-fallback' };
+}
+
+// Compact trend + style context (token-bounded): top-3 trend titles ≤60ch,
+// styleCard ≤200 tokens equivalent. Keeps prompts trend-aware for ~60 tokens.
+function trendContextBlock(trends = [], max = 3) {
+  const items = (trends || []).slice(0, max).map((t) => String(t.title || '').replace(/\s+/g, ' ').trim().slice(0, 60)).filter(Boolean);
+  return items.length ? `|Trends:${items.join(' ~ ')}` : '';
 }
 
 // ---------- hook pattern library (F3.2) ----------
@@ -70,7 +85,8 @@ function fillTemplate(template, topic) {
 }
 
 // ---------- hook generation (F3.1) ----------
-async function generateHooks({ topic, tone = 'punchy', count = 8, niche = '', topCategories = [] }) {
+// trendAware: { trends, styleCard, geo } — all optional, token-bounded.
+async function generateHooks({ topic, tone = 'punchy', count = 8, niche = '', topCategories = [], trends = [], styleCard = '', geo = '' }) {
   const patterns = await retrievePatterns(Math.max(5, Math.ceil(count * 0.75)));
   const fallback = () => {
     const out = [];
@@ -81,10 +97,17 @@ async function generateHooks({ topic, tone = 'punchy', count = 8, niche = '', to
     }
     return { hooks: out };
   };
-  const prompt = `Topic: ${topic}. Niche: ${niche}. Tone: ${tone}.
-Use these proven patterns as inspiration (do not copy): ${patterns.map((p) => `[${p.category}] ${p.pattern}`).join(' | ')}
-Return {"hooks":[{"text":"","category":"question|statement|story|stat|contrarian","pattern_id":""}]} — exactly ${count} hooks, each 6–14 words.`;
-  const { engine: eng, data } = await llmJson('You write short-form video hooks. Return JSON only.', prompt, fallback);
+  const { compactPatterns, clean } = require('../llm/preprocess');
+  const t = clean(topic, 200);
+  const style = clean(styleCard, 400);
+  const prompt = `Topic:${t}|Niche:${clean(niche, 60)}|Tone:${clean(tone, 20)}${geo ? `|Geo:${clean(geo, 8)}` : ''}${style ? `|You:${style}` : ''}|Styles:${compactPatterns(patterns, 60, 5)}${trendContextBlock(trends)}`
+    + `|N=${Math.min(count, 8)} hooks 6-14 words. JSON {"hooks":[{"text":"","category":"question|statement|story|stat|contrarian","pattern_id":""}]}. No preamble.`;
+  const { engine: eng, data, route } = await llmJson(
+    'Hook writer. JSON only. No preamble.',
+    prompt, fallback, {
+      task: 'hooks', temperature: 0.7,
+      validate: (d) => Array.isArray(d?.hooks) && d.hooks.length > 0 && typeof d.hooks[0].text === 'string',
+    });
 
   const raw = Array.isArray(data?.hooks) ? data.hooks : Array.isArray(data) ? data : [];
   const hooks = raw.slice(0, count).map((h) => {
@@ -97,7 +120,13 @@ Return {"hooks":[{"text":"","category":"question|statement|story|stat|contrarian
       score: scoreHook(h.text, { performerPattern: topCategories.includes(h.category) }),
     };
   });
-  return { engine: eng, patterns, hooks };
+  // Trend boost: hooks echoing a live trend title word get +0.05 (capped at 1).
+  const trendWords = new Set((trends || []).flatMap((x) => String(x.title || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3)));
+  for (const h of hooks) {
+    const words = String(h.text || '').toLowerCase().split(/[^a-z0-9]+/);
+    if (words.some((w) => trendWords.has(w))) h.score = Math.min(1, +((h.score || 0) + 0.05).toFixed(2));
+  }
+  return { engine: eng, patterns, hooks, route };
 }
 
 // ---------- script generation (F3.3) + supporting (F3.5) ----------
@@ -130,20 +159,24 @@ function heuristicScript({ hook, topic, tone, lengthSec }) {
   };
 }
 
-async function generateScript({ hook, topic, tone = 'punchy', lengthSec = 60, platforms = 'tiktok,reels,shorts' }) {
+async function generateScript({ hook, topic, tone = 'punchy', lengthSec = 60, platforms = 'tiktok,reels,shorts', trends = [], styleCard = '', geo = '' }) {
   const fallback = () => heuristicScript({ hook, topic, tone, lengthSec });
+  const { clean } = require('../llm/preprocess');
   const budget = Math.round(lengthSec * 2.5);
-  const prompt = `Write a ${lengthSec}s ${tone} short-form video script for: ${topic}
-Opening hook (use verbatim): "${hook}"
-Target platforms: ${platforms}. Word budget ≈ ${budget} (~150 wpm).
-Structure: Hook → Problem → 2–3 value beats → CTA. Each beat = one sentence-level idea.
-Return JSON: {"content":"full script text","beats":[{"idx":0,"text":"","importance":1.0}],
-"supporting":{"title":"","caption":"","hashtags":[],"cta":""}}`;
-  const { engine: eng, data } = await llmJson('You are an expert short-form scriptwriter. Return JSON only.', prompt, fallback);
+  const style = clean(styleCard, 400);
+  const prompt = `${lengthSec}s ${clean(tone, 20)} script:${clean(topic, 200)}|Hook:"${clean(hook, 140)}"`
+    + `|Platforms:${clean(platforms, 60)}${geo ? `|Geo:${clean(geo, 8)}` : ''}${style ? `|You:${style}` : ''}${trendContextBlock(trends, 2)}|~${budget}w|Hook>Problem>2-3 beats>CTA|`
+    + `JSON {"content":"","beats":[{"idx":0,"text":"","importance":1}],"supporting":{"title":"","caption":"","hashtags":[],"cta":""}}. No preamble.`;
+  const { engine: eng, data, route } = await llmJson(
+    'Scriptwriter. JSON only. No preamble.',
+    prompt, fallback, {
+      task: 'script', temperature: 0.7,
+      validate: (d) => typeof d?.content === 'string' && d.content.length > 20 && Array.isArray(d?.beats) && d.beats.length > 0,
+    });
   const base = fallback();
   const beats = Array.isArray(data?.beats) && data.beats.length ? data.beats : base.beats;
   return {
-    engine: eng,
+    engine: eng, route,
     content: typeof data?.content === 'string' && data.content ? data.content : base.content,
     beats: beats.map((b, i) => ({ idx: b.idx ?? i, text: b.text, importance: Number(b.importance) || 0.7 })),
     supporting: { ...base.supporting, ...(data?.supporting || {}) },

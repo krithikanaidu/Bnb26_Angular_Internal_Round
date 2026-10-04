@@ -52,7 +52,7 @@ function ToastItem({ toast, onDismiss }) {
       animate={{ opacity: 1, x: 0, scale: 1 }}
       exit={{ opacity: 0, x: 40, scale: 0.9 }}
       transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-      className="pointer-events-auto rounded-xl bg-white px-4 py-3 shadow-lg flex items-center gap-2 max-w-xs"
+      className="pointer-events-auto rounded-xl bg-surface px-4 py-3 shadow-lg flex items-center gap-2 max-w-xs"
     >
       <span className="w-2 h-2 rounded-full flex-none" style={{ background: color }} />
       <span className="mono-xs" style={{ color: color }}>

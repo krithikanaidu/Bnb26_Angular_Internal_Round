@@ -21,7 +21,7 @@ export async function generateCaptionClips(options: CaptionClipOptions): Promise
     videoHeight,
     words,
     fontSize = 80,
-    fontFamily = "Bangers-Regular",
+    fontFamily = "Poppins",
     fontUrl = "https://fonts.gstatic.com/s/poppins/v15/pxiByp8kv8JHgFVrLCz7V1tvFP-KUEg.ttf",
     mode = "multiple",
   } = options;
@@ -57,17 +57,20 @@ export async function generateCaptionClips(options: CaptionClipOptions): Promise
         fontSize,
       });
       const testWidth = bitmapText.width + 60;
+      // ?? not ||: the first word legitimately starts at 0
+      const startSec = word.start ?? word.from / 1000;
+      const endSec = word.end ?? word.to / 1000;
       return {
         text,
-        from: word.start || word.from / 1000,
-        to: word.end || word.to / 1000,
+        from: startSec,
+        to: endSec,
         width: testWidth,
         height: dims.height,
         words: [
           {
             text,
             from: 0,
-            to: ((word.end || word.to / 1000) - (word.start || word.from / 1000)) * 1000,
+            to: (endSec - startSec) * 1000,
             isKeyWord: true,
             paragraphIndex: word.paragraphIndex ?? 0,
           },

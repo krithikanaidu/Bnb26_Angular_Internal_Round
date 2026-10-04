@@ -5,6 +5,7 @@ import { useTimelineOffsetX } from "../hooks/use-timeline-offset";
 import { useStore } from "zustand";
 import { core, projectStore } from "@/lib/project";
 import { useStudioStore } from "@/stores/studio-store";
+import { toast } from "sonner";
 import { ITimelineScaleState } from "@openvideo/timeline";
 import { getFitZoomLevel } from "../utils/timeline";
 import {
@@ -44,6 +45,17 @@ const Header = ({
   const { selectedClip, isLocked, handleDuplicate, handleDelete } = useClipActions();
 
   const handleSplit = () => {
+    const clips = Object.values(projectStore.getState().clips);
+    const canSplit = clips.some(
+      (clip) =>
+        !clip.locked &&
+        currentTimeUs > clip.timing?.display?.from &&
+        currentTimeUs < clip.timing?.display?.to,
+    );
+    if (!canSplit) {
+      toast.info("Place the playhead over a clip to split");
+      return;
+    }
     core.clip.split(currentTimeUs);
   };
 
@@ -242,6 +254,21 @@ const ZoomControl = ({
     onChangeTimelineScale(fitZoom);
   };
 
+  const onZoomFitSelectionClick = () => {
+    const state = projectStore.getState();
+    const selected = state.selectedIds
+      .map((id) => state.clips[id])
+      .filter(Boolean);
+    if (selected.length === 0) {
+      onZoomFitClick();
+      return;
+    }
+    const from = Math.min(...selected.map((c) => c.timing.display.from));
+    const to = Math.max(...selected.map((c) => c.timing.display.to));
+    const fitZoom = getFitZoomLevel(to - from, scale.zoom, timelineOffsetX);
+    onChangeTimelineScale(fitZoom);
+  };
+
   const onZoomToPlayheadClick = () => {
     onChangeTimelineScale({ ...scale, zoom: 2.0 });
   };
@@ -317,8 +344,8 @@ const ZoomControl = ({
               </DropdownMenuShortcut>
             </DropdownMenuItem>
             <DropdownMenuItem
-              disabled
-              className="opacity-50 flex justify-between items-center text-xs py-1.5"
+              onClick={onZoomFitSelectionClick}
+              className="cursor-pointer flex justify-between items-center text-xs py-1.5"
             >
               <span>Fit selection</span>
               <DropdownMenuShortcut className="text-[10px] text-muted-foreground">

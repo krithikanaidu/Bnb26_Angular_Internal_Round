@@ -672,6 +672,14 @@
   /* ---- Buttons --------------------------------------------------------- */
   .layout button,
   .layout .btn {
+    /* Keycaps carry their lucide icon BESIDE the label: Tailwind preflight
+       sets svg { display: block }, which otherwise drops a trailing arrow
+       onto its own line. gap keeps spacing correct where JSX strips the
+       whitespace between text and icon. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     font-family: var(--font-display);
     font-weight: 800;
     background: var(--color-hot-pink);
@@ -688,6 +696,10 @@
       box-shadow 0.18s var(--ease-out-expo),
       background 0.18s var(--ease-smooth),
       filter 0.18s var(--ease-smooth);
+  }
+  .layout button > svg,
+  .layout .btn > svg {
+    flex: none;
   }
   .layout button:hover:not(:disabled),
   .layout .btn:hover:not(:disabled) {

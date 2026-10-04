@@ -23,60 +23,43 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { core, projectStore } from "@/lib/project";
-import { nanoid, AnyClip } from "@openvideo/core";
-
-// Module-level clipboard — persists across renders
-export let clipboardClipJSON: AnyClip | null = null;
+import { duplicateClips, pasteClipsAt, addClipsAndSelect } from "@/lib/clipboard";
+import { AnyClip } from "@openvideo/core";
 
 export function useClipActions(clipOverride?: any) {
   const selectedIds = useStore(projectStore, (s) => s.selectedIds);
   const primaryId = clipOverride?.id || selectedIds[0];
   const selectedClip = useStore(projectStore, (s) => s.clips[primaryId]);
+  const clipboard = useStore(projectStore, (s) => s.clipboard);
 
-  const [hasClipboard, setHasClipboard] = React.useState(clipboardClipJSON !== null);
-
+  const hasClipboard = clipboard.length > 0;
   const isLocked = selectedClip?.locked ?? false;
-
-  // Sync clipboard state
-  React.useEffect(() => {
-    const interval = setInterval(() => {
-      setHasClipboard(clipboardClipJSON !== null);
-    }, 500);
-    return () => clearInterval(interval);
-  }, []);
 
   const handleCopy = useCallback(() => {
     if (!selectedClip) return;
-    clipboardClipJSON = JSON.parse(JSON.stringify(selectedClip));
-    setHasClipboard(true);
+    projectStore
+      .getState()
+      .setClipboard([JSON.parse(JSON.stringify(selectedClip)) as AnyClip]);
   }, [selectedClip]);
 
   const handlePaste = useCallback(async () => {
-    if (!clipboardClipJSON) return;
+    const items = projectStore.getState().clipboard;
+    if (items.length === 0) return;
 
-    const newId = nanoid();
     const currentTime = core.store.getState().currentTime;
-
-    const newClip = {
-      ...clipboardClipJSON,
-      id: newId,
-      timing: {
-        ...clipboardClipJSON.timing,
-        display: {
-          ...clipboardClipJSON.timing.display,
-          from: currentTime,
-          to: currentTime + clipboardClipJSON.timing.duration,
-        },
-      },
-    };
-
-    await core.clip.add(newClip as any);
+    await addClipsAndSelect(pasteClipsAt(items as AnyClip[], currentTime));
   }, []);
 
   const handleDuplicate = useCallback(async () => {
     const ids = clipOverride ? [clipOverride.id] : selectedIds;
     if (ids.length === 0) return;
-    core.clip.duplicate(ids);
+    const { clips } = projectStore.getState();
+    const clipsToDuplicate = ids
+      .map((id) => clips[id])
+      .filter(Boolean)
+      .map((clip) => JSON.parse(JSON.stringify(clip)));
+    if (clipsToDuplicate.length === 0) return;
+    await addClipsAndSelect(duplicateClips(clipsToDuplicate as AnyClip[]));
   }, [selectedIds, clipOverride]);
 
   const handleToggleLock = useCallback(async () => {

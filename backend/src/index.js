@@ -27,12 +27,21 @@ process.on('uncaughtException', (err) => {
 // Rendered shorts + uploads served for preview/download
 app.use('/media', express.static(path.join(__dirname, '..', 'media')));
 
-app.get('/api/health', optionalAuth, (req, res) => {
+app.get('/api/health', optionalAuth, async (req, res) => {
   const { sttProvider, hasStt } = require('./clippedai/keys');
   const { resolveProvider } = require('./services/llmProvider');
+  const { cheapModel, PROMPT_VERSION } = require('./llm/client');
   const { CLIPAI_SCORE_WEIGHTS } = require('./clippedai/score');
   const stt = sttProvider();
   const p = resolveProvider();
+  // Awaiting the count: it used to be embedded as a pending Promise, which
+  // serialised to `{}` and told the UI nothing about first-run state.
+  let accounts = null;
+  try {
+    accounts = await require('./models').User.count();
+  } catch {
+    accounts = null;
+  }
   res.json({
     ok: true,
     service: 'creatorai-backend',
@@ -54,10 +63,18 @@ app.get('/api/health', optionalAuth, (req, res) => {
     // The real blend, so the UI can describe the algorithm it actually runs
     // instead of hardcoded percentages describing a different one.
     scoreWeights: CLIPAI_SCORE_WEIGHTS,
+    // Token-cost posture: per-task budgets + exact-match response cache with
+    // in-flight dedupe (see src/llm/). Cache hits bill zero tokens.
+    llm: {
+      promptVersion: PROMPT_VERSION,
+      cascade: process.env.LLM_CASCADE !== '0',
+      cheapModel: cheapModel(),
+      cache: require('./llm/cache').getStats(),
+    },
     // Tells the marketing page whether this install has any accounts yet, so a
     // fresh database can say "create the first one" instead of pretending a
     // login form alone is enough.
-    accounts: require('./models').User.count().catch(() => null),
+    accounts,
     signedInAs: req.user ? { email: req.user.email, name: req.user.name } : null,
   });
 });
@@ -74,6 +91,23 @@ app.use('/api', requireAuth, require('./routes/ideation'));
 app.use('/api/content', requireAuth, require('./routes/ideation'));
 app.use('/api/content', requireAuth, require('./routes/content'));
 app.use('/api/clippedai', requireAuth, require('./routes/clippedai'));
+// Video-editor auto-captions (multipart file or JSON { url }).
+app.use('/api/transcribe', requireAuth, require('./routes/transcribe'));
+
+// Safety net: any error that escapes a route (sync throw, or an async throw
+// forwarded via next(err)) becomes a JSON 500 instead of a hung request or,
+// on older boot code, a dead process. Async handlers should still try/catch
+// locally so they can return specific messages — this is the backstop.
+app.use('/api', (err, _req, res, _next) => {
+  console.error('[api] unhandled route error:', err?.message || err);
+  if (res.headersSent) return;
+  const code = err?.parent?.code || err?.original?.code;
+  const hint =
+    code === '42703'
+      ? ' A database column is missing — restart the backend so the boot-time schema ensure can add it, and check DATABASE_URL points at the app database.'
+      : '';
+  res.status(500).json({ error: `${err?.message || 'Internal server error'}.${hint}` });
+});
 
 const PORT = process.env.PORT || 5000;
 (async () => {
@@ -102,7 +136,18 @@ const PORT = process.env.PORT || 5000;
     await ensureBucket().catch((e) => console.warn('[supabase]', e.message));
     await require('./clippedai/schema').ensureClipAiSchema();
     await require('./clippedai/jobs').recoverStuckJobs();
-    app.listen(PORT, () => console.log(`CreatorAI backend on :${PORT}`));
+    const server = app.listen(PORT, () => console.log(`CreatorAI backend on :${PORT}`));
+    // A busy port used to surface as a bare "[uncaughtException] listen
+    // EADDRINUSE" with the process lingering half-dead. Say plainly what
+    // happened and exit so nodemon / the terminal shows a clean failure.
+    server.on('error', (e) => {
+      if (e && e.code === 'EADDRINUSE') {
+        console.error(`[fatal] Port ${PORT} is already in use — another CreatorAI backend is running.`);
+        console.error(`  Stop it first (or set PORT=5001 in backend/.env), then retry.`);
+        process.exit(1);
+      }
+      throw e;
+    });
   } catch (e) {
     console.error('[fatal] Could not connect to Supabase Postgres.');
     console.error('  1. Copy backend/.env.example -> backend/.env');

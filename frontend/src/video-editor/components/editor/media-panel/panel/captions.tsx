@@ -16,6 +16,7 @@ import {
 import { fontManager, Log } from "@openvideo/engine-pixi";
 import type { AnyClip } from "@openvideo/core";
 import { generateCaptionClips } from "@/lib/caption-generator";
+import { editorApi } from "@/lib/editor-api";
 import { useStore } from "zustand";
 import { projectStore, core } from "@/lib/project";
 import { cn } from "@/lib/utils";
@@ -47,11 +48,7 @@ export default function PanelCaptions() {
     activeCaptionIdRef.current = activeCaptionId;
   }, [activeCaptionId]);
 
-  const updateClips = () => {}; // No longer needed but kept empty to avoid breaking other calls if any
-
   useEffect(() => {
-    const handleUpdate = () => updateClips();
-
     const handleTimeUpdate = (currentTime: number) => {
       // Find the currently active caption
       // We use the Ref because this closure is created once and we don't want to re-bind listener
@@ -80,7 +77,7 @@ export default function PanelCaptions() {
 
     setIsGenerating(true);
     try {
-      const fontName = "Bangers-Regular";
+      const fontName = "Poppins";
       const fontUrl = "https://fonts.gstatic.com/s/poppins/v15/pxiByp8kv8JHgFVrLCz7V1tvFP-KUEg.ttf";
 
       await fontManager.addFont({
@@ -90,35 +87,48 @@ export default function PanelCaptions() {
 
       const clipsToAdd: any[] = [];
       let transcribeFailed = false;
+      let lastError: string | null = null;
 
       for (const mediaClip of mediaItems) {
         try {
-          // 1. Get transcription
+          // 1. Get transcription — http(s) sources by URL, local/blob sources
+          // by uploading the bytes (the backend cannot reach blob: URLs).
           const audioUrl = (mediaClip as any).src;
           if (!audioUrl) continue;
 
-          const transcribeResponse = await fetch("/api/transcribe", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: audioUrl, model: "nova-3" }),
-          });
-
-          if (!transcribeResponse.ok) {
-            Log.error(`Transcription failed for media ${mediaClip.id}`);
-            transcribeFailed = true;
-            continue;
+          let transcribeData: { words?: any[] };
+          if (/^https?:\/\//i.test(audioUrl)) {
+            transcribeData = await editorApi<{ words?: any[] }>("/api/transcribe", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ url: audioUrl }),
+            });
+          } else {
+            const blob = await (await fetch(audioUrl)).blob();
+            const ext = blob.type.includes("webm")
+              ? "webm"
+              : blob.type.includes("mpeg") || blob.type.includes("mp3")
+                ? "mp3"
+                : blob.type.includes("wav")
+                  ? "wav"
+                  : "mp4";
+            const form = new FormData();
+            form.append("file", blob, `audio.${ext}`);
+            transcribeData = await editorApi<{ words?: any[] }>("/api/transcribe", {
+              method: "POST",
+              body: form,
+            });
           }
 
-          const transcriptionData = await transcribeResponse.json();
-          if (!transcriptionData) continue;
-
-          const words = transcriptionData.results?.main?.words || transcriptionData.words || [];
+          const words = transcribeData.words || [];
 
           const settings = core.store.getState().settings;
           const captionClipsJSON = await generateCaptionClips({
             videoWidth: settings.width,
             videoHeight: settings.height,
             words,
+            fontFamily: fontName,
+            fontUrl,
           });
 
           // 3. Prepare clips
@@ -139,8 +149,10 @@ export default function PanelCaptions() {
             };
             clipsToAdd.push(enrichedJson);
           }
-        } catch (error) {
-          Log.error(`Failed to process media ${mediaClip.id}:`, error);
+        } catch (error: any) {
+          lastError = error?.message || "Transcription failed.";
+          Log.error(`Failed to process media ${mediaClip.id}:`, lastError);
+          transcribeFailed = true;
         }
       }
 
@@ -187,8 +199,8 @@ export default function PanelCaptions() {
 
         core.batch([trackCommand, ...addCommands] as any[]);
       } else if (transcribeFailed) {
-        toast.error("Auto-captions need the transcription backend", {
-          description: "Connect the /api backend (Deepgram) or add caption clips manually.",
+        toast.error("Auto-captions could not be generated", {
+          description: lastError || "Check that the clip has audible speech and try again.",
         });
       } else {
         core.execute(trackCommand as any);
@@ -328,10 +340,7 @@ export default function PanelCaptions() {
     if (!track) return;
 
     if (!fullUpdate) {
-      // MODO RÁPIDO: solo actualizar text (para onChange)
-      const captionClip = clip as any;
-      captionClip.text = text;
-      captionClip.emit("propsChange", { text });
+      core.clip.update(id, { text });
       return;
     }
 

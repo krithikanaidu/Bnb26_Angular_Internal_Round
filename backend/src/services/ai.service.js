@@ -2,11 +2,11 @@ const axios = require('axios');
 
 // Unified AI layer: Groq (OpenAI-compatible) > OpenAI > deterministic heuristic
 // so the app works out-of-the-box for demos/hackathons.
-async function llm(prompt, fallback) {
+async function llm(prompt, fallback, { task = 'legacyScript', temperature } = {}) {
   const { chatJson } = require('./llmProvider');
   const { engine, data } = await chatJson({
-    system: 'You are CreatorAI, an expert short-form content strategist and scriptwriter.',
-    user: prompt, temperature: 0.8, json: false,
+    system: 'Short-form scriptwriter. JSON only. No preamble.',
+    user: prompt, temperature, json: false, task,
   });
   if (data) return data;
   return fallback();
@@ -40,18 +40,20 @@ function heuristicScript(topic, tone = 'energetic') {
 }
 
 async function generateHooks(topic, count = 5) {
-  return llm(`Generate ${count} viral hooks for: ${topic}. Return JSON array [{text,style,score}].`, () =>
-    JSON.stringify(heuristicHooks(topic, count))
-  ).then((r) => {
+  const t = String(topic || 'this video').replace(/\s+/g, ' ').trim().slice(0, 200);
+  return llm(`Hooks for "${t}" (${count}): JSON [{"text":"","style":"","score":0}]. 6-14 words each. No preamble.`,
+    () => JSON.stringify(heuristicHooks(topic, count)),
+    { task: 'legacyHooks', temperature: 0.7 }).then((r) => {
     try { const j = JSON.parse(r); return Array.isArray(j) ? j : heuristicHooks(topic, count); }
     catch { return heuristicHooks(topic, count); }
   });
 }
 
 async function generateScript(topic, tone, platforms) {
-  return llm(`Write a 60s ${tone} video script for "${topic}" optimized for ${platforms}. Include HOOK/CONTEXT/VALUE/PROOF/CTA.`, () =>
-    heuristicScript(topic, tone).body
-  );
+  const t = String(topic || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  return llm(`60s ${tone} script for "${t}" (${platforms}). HOOK/CONTEXT/VALUE/PROOF/CTA. <=150 words.`,
+    () => heuristicScript(topic, tone).body,
+    { task: 'legacyScript', temperature: 0.7 });
 }
 
 module.exports = { llm, generateHooks, generateScript, heuristicHooks, heuristicScript, HOOK_STYLES };

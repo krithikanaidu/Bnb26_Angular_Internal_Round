@@ -248,10 +248,10 @@ export const convertSchemaToExported = async (schemaJson: any): Promise<any> => 
   const schema = schemaJson.schema || schemaJson;
   const clips: any[] = [];
 
-  // Load Bangers font for caption text measurement
+  // Load Poppins font for caption text measurement
   await fontManager.loadFonts([
     {
-      name: "Bangers-Regular",
+      name: "Poppins",
       url: "https://fonts.gstatic.com/s/poppins/v15/pxiByp8kv8JHgFVrLCz7V1tvFP-KUEg.ttf",
     },
   ]);
@@ -402,7 +402,7 @@ export const convertSchemaToExported = async (schemaJson: any): Promise<any> => 
             const words = captionData.results.main.words;
 
             // Group words by width
-            const captionChunks = groupWordsByWidth(words, 800, 80, "Bangers-Regular", 1);
+            const captionChunks = groupWordsByWidth(words, 800, 80, "Poppins", 1);
 
             // Create Caption clips for each chunk
             for (const chunk of captionChunks) {
@@ -444,7 +444,7 @@ export const convertSchemaToExported = async (schemaJson: any): Promise<any> => 
                 text: chunk.text,
                 style: {
                   fontSize: 80,
-                  fontFamily: "Bangers-Regular",
+                  fontFamily: "Poppins",
                   fontWeight: "700",
                   fontStyle: "normal",
                   fill: "#ffffff",

@@ -25,6 +25,20 @@
   <!-- Paper-sheet base colour, so there is no dark flash before React mounts.
        The video editor paints its own opaque workspace over this. -->
   <style>html,body{background:#f0e8d8;margin:0}</style>
+  <!-- Re-apply the persisted shell theme before first paint: without this,
+       dark-theme users get a light cream flash on every load. -->
+  <script>
+    try {
+      if (localStorage.getItem('bb-theme') === 'dark') {
+        document.documentElement.dataset.bbTheme = 'dark';
+        var s = document.createElement('style');
+        s.textContent = 'html,body{background:#191722}';
+        document.head.appendChild(s);
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.setAttribute('content', '#191722');
+      }
+    } catch (e) {}
+  </script>
 </head>
 <body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body>
 </html>

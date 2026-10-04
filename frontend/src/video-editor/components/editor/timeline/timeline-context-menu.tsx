@@ -15,7 +15,7 @@ import {
   RiDeleteBinLine,
 } from "@remixicon/react";
 import { core, projectStore } from "@/lib/project";
-import { nanoid } from "nanoid";
+import { duplicateClips, pasteClipsAt, addClipsAndSelect } from "@/lib/clipboard";
 import type { AnyClip } from "@openvideo/core";
 import { useStudioStore } from "@/stores/studio-store";
 
@@ -93,66 +93,19 @@ export function useClipActions(clipId?: string) {
     if (items.length === 0) return;
 
     const currentTime = core.store.getState().currentTime;
-    const earliestFrom = Math.min(...items.map((c: AnyClip) => c.timing?.display?.from ?? 0));
-
-    const newClips = items.map((clip: AnyClip) => {
-      const offsetFromStart = (clip.timing?.display?.from ?? 0) - earliestFrom;
-      const newFrom = currentTime + offsetFromStart;
-      const duration = clip.timing?.duration ?? 0;
-
-      return {
-        ...clip,
-        id: nanoid(),
-        timing: {
-          ...clip.timing,
-          display: {
-            ...clip.timing?.display,
-            from: newFrom,
-            to: newFrom + duration,
-          },
-        },
-      };
-    });
-
-    await Promise.all(newClips.map((clip: AnyClip) => core.clip.add(clip)));
-    projectStore.getState().select(newClips.map((c: AnyClip) => c.id));
+    await addClipsAndSelect(pasteClipsAt(items as AnyClip[], currentTime));
   }, []);
 
-  // Duplicate = copy selected then paste
+  // Duplicate = copy selected then place right after the original
   const handleDuplicate = useCallback(async () => {
     if (selectedIds.length === 0) return;
-    // Copy selected clips to clipboard
     const clipsToDuplicate = selectedIds
       .map((id) => clips[id])
       .filter(Boolean)
       .map((clip) => JSON.parse(JSON.stringify(clip)));
 
     if (clipsToDuplicate.length === 0) return;
-
-    const currentTime = core.store.getState().currentTime;
-    const earliestFrom = Math.min(...clipsToDuplicate.map((c) => c.timing?.display?.from ?? 0));
-
-    const newClips = clipsToDuplicate.map((clip) => {
-      const offsetFromStart = (clip.timing?.display?.from ?? 0) - earliestFrom;
-      const newFrom = currentTime + offsetFromStart;
-      const duration = clip.timing?.duration ?? 0;
-
-      return {
-        ...clip,
-        id: nanoid(),
-        timing: {
-          ...clip.timing,
-          display: {
-            ...clip.timing?.display,
-            from: newFrom,
-            to: newFrom + duration,
-          },
-        },
-      };
-    });
-
-    await Promise.all(newClips.map((clip) => core.clip.add(clip as AnyClip)));
-    projectStore.getState().select(newClips.map((c) => c.id));
+    await addClipsAndSelect(duplicateClips(clipsToDuplicate as AnyClip[]));
   }, [selectedIds, clips]);
 
   // Delete the specific clicked clip

@@ -1,17 +1,16 @@
 /**
- * Client for the editor's `/api/*` endpoints.
+ * Client for the editor's `/api/*` endpoints (transcribe, stock media, presign).
  *
- * The original Next.js project served these routes itself (uploads, transcribe,
- * stock music/SFX, Pexels). This Vite port has no `/api/*` server yet, so every
- * call currently 404s. This helper fails fast with a typed error (instead of
- * an HTML-as-JSON parse crash + console spam) so panels can render a friendly
- * "connect a backend" empty state.
- *
- * Once the Express backend implements these endpoints, no panel code changes
- * are needed — set `VITE_EDITOR_API_URL` (e.g. `http://localhost:5000`) and the
- * calls will be routed there.
+ * Defaults to the same backend the shell app talks to (`VITE_API_URL`), so the
+ * editor panels work without extra configuration; `VITE_EDITOR_API_URL` still
+ * overrides for a dedicated editor service. Endpoints the backend has not
+ * implemented return 404, which surfaces as EditorApiUnavailableError so
+ * panels keep their "connect a backend" empty states.
  */
 import { env } from "./vite-env";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore — shell helper, untyped JS
+import { getToken } from "../../lib/session";
 
 export class EditorApiUnavailableError extends Error {
   constructor(path: string) {
@@ -24,19 +23,33 @@ export class EditorApiUnavailableError extends Error {
 }
 
 function apiBase(): string {
-  const base = env("EDITOR_API_URL");
-  return base ? base.replace(/\/$/, "") : "";
+  const base = env("EDITOR_API_URL") || env("API_URL").replace(/\/api\/?$/, "") || "http://localhost:5000";
+  return base.replace(/\/$/, "");
 }
 
 export async function editorApi<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${apiBase()}${path}`;
+  const headers = new Headers(init?.headers);
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
   let res: Response;
   try {
-    res = await fetch(url, init);
+    res = await fetch(url, { ...init, headers });
   } catch {
     throw new EditorApiUnavailableError(path);
   }
   if (!res.ok) {
+    // Real backend responses carry an actionable message — pass it through.
+    const detail = await res
+      .json()
+      .then((body) => body?.error)
+      .catch(() => null);
+    if (typeof detail === "string" && detail) {
+      const err = new Error(detail) as Error & { status?: number };
+      err.status = res.status;
+      throw err;
+    }
     throw new EditorApiUnavailableError(path);
   }
   try {

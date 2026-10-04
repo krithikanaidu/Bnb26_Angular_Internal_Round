@@ -8,14 +8,13 @@ import {
   RiArrowRightSLine,
   RiClipboardLine,
   RiFileCopyLine,
-  RiEyeLine,
   RiFlipHorizontalLine,
   RiFlipVerticalLine,
   RiLockLine,
   RiDeleteBinLine,
 } from "@remixicon/react";
 import { core, projectStore } from "@/lib/project";
-import { nanoid } from "nanoid";
+import { pasteClipsAt, addClipsAndSelect } from "@/lib/clipboard";
 import type { AnyClip } from "@openvideo/core";
 import type { ProjectStore } from "@openvideo/core";
 import { useStudioStore } from "@/stores/studio-store";
@@ -242,29 +241,7 @@ export function StudioContextMenuContent({ state, onClose }: StudioContextMenuCo
     if (items.length === 0) return;
 
     const currentTime = core.store.getState().currentTime;
-    const earliestFrom = Math.min(...items.map((c: AnyClip) => c.timing?.display?.from ?? 0));
-
-    const newClips = items.map((clip: AnyClip) => {
-      const offsetFromStart = (clip.timing?.display?.from ?? 0) - earliestFrom;
-      const newFrom = currentTime + offsetFromStart;
-      const duration = clip.timing?.duration ?? 0;
-
-      return {
-        ...clip,
-        id: nanoid(),
-        timing: {
-          ...clip.timing,
-          display: {
-            ...clip.timing?.display,
-            from: newFrom,
-            to: newFrom + duration,
-          },
-        },
-      };
-    });
-
-    await Promise.all(newClips.map((clip: AnyClip) => core.clip.add(clip)));
-    projectStore.getState().select(newClips.map((c: AnyClip) => c.id));
+    await addClipsAndSelect(pasteClipsAt(items as AnyClip[], currentTime));
   }, []);
 
   const handleDelete = useCallback(() => {
@@ -272,13 +249,43 @@ export function StudioContextMenuContent({ state, onClose }: StudioContextMenuCo
     core.clip.remove(selectedIds);
   }, [selectedIds, hasSelection]);
 
-  const handleToggleVisibility = useCallback(() => {
-    console.log("Toggle visibility");
-  }, []);
-
   const handleToggleLock = useCallback(() => {
-    console.log("Toggle lock");
-  }, []);
+    if (!hasSelection) return;
+    const { clips } = projectStore.getState();
+    const allLocked = selectedIds.every((id) => clips[id]?.locked);
+    selectedIds.forEach((id) => {
+      if (!clips[id]) return;
+      core.clip.update(id, { locked: !allLocked });
+    });
+  }, [selectedIds, hasSelection]);
+
+  const handleFlip = useCallback(
+    (axis: "x" | "y") => {
+      if (!hasSelection) return;
+      const { clips } = projectStore.getState();
+      selectedIds.forEach((id) => {
+        const clip = clips[id];
+        if (!clip) return;
+        const flip = clip.transform?.flip ?? { x: false, y: false };
+        core.clip.update(id, {
+          transform: { ...clip.transform, flip: { ...flip, [axis]: !flip[axis] } },
+        });
+      });
+    },
+    [selectedIds, hasSelection],
+  );
+
+  const handleRotate90 = useCallback(() => {
+    if (!hasSelection) return;
+    const { clips } = projectStore.getState();
+    selectedIds.forEach((id) => {
+      const clip = clips[id];
+      if (!clip) return;
+      core.clip.update(id, {
+        transform: { ...clip.transform, angle: ((clip.transform?.angle ?? 0) + 90) % 360 },
+      });
+    });
+  }, [selectedIds, hasSelection]);
 
   if (!state.isOpen) return null;
 
@@ -313,12 +320,6 @@ export function StudioContextMenuContent({ state, onClose }: StudioContextMenuCo
 
         <MenuSeparator />
 
-        <MenuItem onClick={wrapWithClose(handleToggleVisibility)}>
-          <RiEyeLine className="w-4 h-4" />
-          Hide
-          <Shortcut>⌘ H</Shortcut>
-        </MenuItem>
-
         <MenuItem onClick={wrapWithClose(handleToggleLock)}>
           <RiLockLine className="w-4 h-4" />
           Lock
@@ -333,11 +334,11 @@ export function StudioContextMenuContent({ state, onClose }: StudioContextMenuCo
             </>
           }
         >
-          <MenuItem onClick={wrapWithClose(() => {})}>Flip Horizontal</MenuItem>
-          <MenuItem onClick={wrapWithClose(() => {})}>Flip Vertical</MenuItem>
+          <MenuItem onClick={wrapWithClose(() => handleFlip("x"))}>Flip Horizontal</MenuItem>
+          <MenuItem onClick={wrapWithClose(() => handleFlip("y"))}>Flip Vertical</MenuItem>
         </MenuSub>
 
-        <MenuItem onClick={wrapWithClose(() => {})}>
+        <MenuItem onClick={wrapWithClose(handleRotate90)}>
           <RiArrowGoForwardLine className="w-4 h-4" />
           Rotate 90°
         </MenuItem>

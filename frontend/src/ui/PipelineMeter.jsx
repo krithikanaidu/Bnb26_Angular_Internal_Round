@@ -68,7 +68,7 @@ export function PipelineMeter({ currentStage, total = PIPELINE_STAGES.length, cl
       <span className="sr-only" role="status" aria-live="polite">
         {announced}
       </span>
-      <span className="mono-xs bg-white/80 px-2 py-1 rounded" aria-hidden="true">
+      <span className="mono-xs bg-surface/80 px-2 py-1 rounded" aria-hidden="true">
         {stageInfo}
       </span>
       <div className="w-20 h-px bg-ink/20 relative overflow-hidden" aria-hidden="true">

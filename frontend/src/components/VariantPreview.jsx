@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { StatusDot } from '../ui/StatusDot';
 import { NO_VALUE } from '../ui/AppKit';
+import { TriangleAlert } from 'lucide-react';
 
 // Per-platform variant card (F7.3): true-aspect phone frame with safe-zone
 // overlay + editable caption/title/hashtags with live counters + warnings.
@@ -144,7 +145,8 @@ export default function VariantPreview({ variant, onSave, onSchedule }) {
         <div className="flex flex-col gap-1.5 mt-3">
           {warnings.map((w, i) => (
             <span key={i} className="pill pill-yellow self-start" style={{ whiteSpace: 'normal', textAlign: 'left' }}>
-              ⚠ {w.message} <span className="muted">— {w.fix}</span>
+              <TriangleAlert className="w-3.5 h-3.5 inline-block -mt-0.5 mr-1 flex-none" />
+              {w.message} <span className="muted">— {w.fix}</span>
             </span>
           ))}
         </div>

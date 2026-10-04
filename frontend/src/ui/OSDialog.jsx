@@ -72,7 +72,7 @@ function DialogCard({ dialog, onDismiss }) {
         <HandSVG className="absolute -right-8 bottom-2 w-10 h-10 text-ink/80 z-0" side="right" />
 
         <div
-          className="relative z-10 rounded-3xl bg-white px-8 py-7 text-center"
+          className="relative z-10 rounded-3xl bg-paper px-8 py-7 text-center"
           style={{ width: 340, maxWidth: '100%', boxShadow: 'var(--sticker-shadow), 0 24px 60px rgba(0,0,0,0.25)' }}
         >
           <h2 className="font-display font-black text-2xl leading-tight text-ink tracking-tight">
@@ -121,7 +121,7 @@ function HandSVG({ className, side }) {
       <path
         d="M5 35 L5 20 Q5 15 10 15 L15 15 L15 10 Q15 5 20 5 Q25 5 25 10 L25 20 L30 20 Q35 20 35 25 L35 35 Z"
         fill="#F4C2A0"
-        stroke="#141414"
+        stroke="currentColor"
         strokeWidth="1.5"
         strokeLinejoin="round"
       />
