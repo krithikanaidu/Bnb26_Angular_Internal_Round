@@ -228,30 +228,49 @@ router.delete('/publish/:id', async (req, res) => {
 });
 
 // --- Creator intelligence ---
+// Every field below is derived from real rows. Nothing here is invented: there is
+// no hardcoded "best hook style", no hardcoded posting window and no made-up
+// "scores 12% higher" claim, because none of those can be computed from the data
+// this app actually stores. When there is not enough real data the field is null
+// and the UI renders an empty state instead of a fabricated insight.
 router.get('/insights', async (req, res) => {
   const clips = await Clip.findAll({ order: [['viralityScore', 'DESC']], limit: 20 });
   const metrics = await Metric.findAll({ limit: 100 });
   const totals = metrics.reduce((a, m) => ({ views: a.views + m.views, likes: a.likes + m.likes, comments: a.comments + m.comments, shares: a.shares + m.shares }), { views: 0, likes: 0, comments: 0, shares: 0 });
+
+  const avgClipLen = clips.length
+    ? +(clips.reduce((a, c) => a + (c.endSec - c.startSec), 0) / clips.length).toFixed(1)
+    : null;
+
+  // Best platform = the one with the most recorded views. Null until metrics exist.
+  const byPlatform = metrics.reduce((acc, m) => {
+    if (!m.platform) return acc;
+    acc[m.platform] = (acc[m.platform] || 0) + (m.views || 0);
+    return acc;
+  }, {});
+  const ranked = Object.entries(byPlatform).sort((a, b) => b[1] - a[1]);
+  const bestPlatform = ranked.length ? { platform: ranked[0][0], views: ranked[0][1] } : null;
+
+  const suggestion = clips.length
+    ? `Based on ${clips.length} clip${clips.length === 1 ? '' : 's'}: average length ${avgClipLen}s`
+      + `${bestPlatform ? `, most views on ${bestPlatform.platform} (${bestPlatform.views.toLocaleString()})` : ''}.`
+    : null;
+
   res.json({
     totals,
     topClips: clips.slice(0, 5),
     productionPatterns: {
-      avgClipLen: clips.length ? +(clips.reduce((a, c) => a + (c.endSec - c.startSec), 0) / clips.length).toFixed(1) : 0,
-      bestHookStyle: 'shock',
-      bestPostWindow: '18:00–21:00 IST',
-      suggestion: 'Hooks with a number + stakes (“3 mistakes…”) score 12% higher. Keep clips 24–34s for Reels.',
+      avgClipLen,
+      clipCount: clips.length,
+      metricCount: metrics.length,
+      bestPlatform,
+      // Retained as explicit nulls so clients can tell "not measured" from "zero".
+      bestHookStyle: null,
+      bestPostWindow: null,
+      suggestion,
     },
     series: metrics.map((m) => ({ platform: m.platform, views: m.views, likes: m.likes })),
   });
-});
-
-// Seed demo metrics
-router.post('/insights/seed', async (req, res) => {
-  const { projectId } = req.body;
-  const plats = ['tiktok', 'reels', 'shorts', 'x'];
-  const rows = plats.map((p, i) => ({ projectId, platform: p, views: 5000 + i * 3700 + Math.floor(Math.random() * 2000), likes: 300 + i * 180, comments: 20 + i * 12, shares: 15 + i * 9, retentionPct: 42 + i * 3 }));
-  await Metric.bulkCreate(rows);
-  res.status(201).json(rows);
 });
 
 module.exports = router;

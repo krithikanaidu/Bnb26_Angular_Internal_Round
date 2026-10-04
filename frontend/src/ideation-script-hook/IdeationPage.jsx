@@ -13,14 +13,19 @@ import './ideation.css';
 export default function IdeationPage() {
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState('');
-  const [topic, setTopic] = useState('SaaS pricing mistakes most founders make');
+  // All three start empty. They used to be pre-filled with a developer-authored
+  // topic ('SaaS pricing mistakes most founders make') and niche ('B2B SaaS'),
+  // which were submitted to the generators as the workspace's real topic.
+  const [topic, setTopic] = useState('');
   const [tone, setTone] = useState('punchy');
-  const [niche, setNiche] = useState('B2B SaaS');
+  const [niche, setNiche] = useState('');
   const [hook, setHook] = useState(null);
   const [script, setScript] = useState(null);
   const [savedScripts, setSavedScripts] = useState([]);
   const [activeStage, setActiveStage] = useState('idea');
   const [reachedStage, setReachedStage] = useState(1);
+  const [loadError, setLoadError] = useState(null);
+  const [patternHint, setPatternHint] = useState(null);
 
   // Load projects safely
   useEffect(() => {
@@ -29,10 +34,12 @@ export default function IdeationPage() {
       .then((r) => {
         if (active) {
           setProjects(Array.isArray(r?.data) ? r.data : []);
+          setLoadError(null);
         }
       })
-      .catch(() => {
-        if (active) setProjects([]);
+      .catch((e) => {
+        // Surface the failure instead of silently pretending there are no projects.
+        if (active) { setProjects([]); setLoadError(e?.response?.data?.error || 'Could not load projects — is the backend running?'); }
       });
 
     return () => { active = false; };
@@ -70,8 +77,14 @@ export default function IdeationPage() {
 
   // When user selects a pattern from pattern library
   const handlePatternSelect = (pattern) => {
-    const formatted = (pattern.pattern || '').replace('{topic}', topic || 'this topic');
-    setTopic(formatted);
+    // Requires a real topic. Substituting 'this topic' used to push a fabricated
+    // string into the topic field and from there into the generators.
+    if (!topic.trim()) {
+      setPatternHint('Enter your topic first — a pattern is only a template, so it needs something to fill it.');
+      return;
+    }
+    setPatternHint(null);
+    setTopic((pattern.pattern || '').replace('{topic}', topic.trim()));
     setActiveStage('hooks');
   };
 
@@ -87,11 +100,15 @@ export default function IdeationPage() {
       version: Number(s.version) || 1,
       engine: 'saved',
     });
+    // The hook text is recovered from the script's first line, but its strength is
+    // NOT invented: a saved script carries no scored hook, so score stays null and
+    // the Strength badge is hidden rather than showing a fabricated 85%.
     setHook({
-      id: s.hookPatternId || 'saved-hook',
-      text: (s.body || '').split('\n')[0]?.replace(/^HOOK[^:]*:\s*/i, '') || s.title,
-      category: 'statement',
-      score: 0.85,
+      id: s.hookPatternId || null,
+      text: (s.body || '').split('\n')[0]?.replace(/^HOOK[^:]*:\s*/i, '') || s.title || '',
+      category: null,
+      score: null,
+      fromSavedScript: true,
     });
     setReachedStage(4);
     setActiveStage('script');
@@ -132,6 +149,8 @@ export default function IdeationPage() {
       </div>
 
       {/* Pipeline Navigation Rail */}
+      {loadError && <p className="error-text">⚠ {loadError}</p>}
+
       <StageRail
         active={activeStage}
         reached={reachedStage}
@@ -172,6 +191,7 @@ export default function IdeationPage() {
             onPick={handleHookPick}
           />
           <HookPatternLibrary onSelectPattern={handlePatternSelect} />
+          {patternHint && <p className="error-text">⚠ {patternHint}</p>}
         </>
       )}
 
@@ -220,14 +240,16 @@ export default function IdeationPage() {
                   }}
                 >
                   <div className="row" style={{ justifyContent: 'space-between' }}>
-                    <b>{s.title || 'Untitled Script'}</b>
+                    <b>{s.title || 'Untitled'}</b>
                     <span className="pill">v{s.version || 1}</span>
                   </div>
                   <div className="mut" style={{ fontSize: 12, marginTop: 4 }}>
-                    Tone: {s.tone || 'standard'} · {s.body ? `${s.body.split(/\s+/).length} words` : '0 words'}
+                    {/* 'standard' was never a tone in this app's vocabulary, and
+                        "0 words" asserted a measurement that was never taken. */}
+                    Tone: {s.tone || '—'} · {s.body ? `${s.body.split(/\s+/).filter(Boolean).length} words` : 'no body'}
                   </div>
                   <pre className="ia-history-snippet">
-                    {(s.body || '').slice(0, 140)}...
+                    {(s.body || '').slice(0, 140)}{s.body && s.body.length > 140 ? '…' : ''}
                   </pre>
                 </div>
               ))}

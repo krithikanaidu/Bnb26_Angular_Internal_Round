@@ -1,32 +1,25 @@
 import { useState } from 'react';
 
-// Suggested topics grounded in creator intelligence & proven viral hook patterns (F3.6)
-const RECOMMENDED_IDEAS = [
-  {
-    topic: '5 AI tools that save 10 hours of video editing every week',
-    niche: 'Creator Economy & AI',
-    tone: 'punchy',
-    reason: 'Stat + listicle pattern shows +34% retention lift across short-form formats.',
-  },
-  {
-    topic: 'Why your opening hooks are killing your video retention (and the fix)',
-    niche: 'Content Strategy',
-    tone: 'educational',
-    reason: 'Question + problem pattern targets high scroll-stop rate in first 3 seconds.',
-  },
-  {
-    topic: 'Stop editing in Premiere before you know this one workflow trick',
-    niche: 'Video Production',
-    tone: 'contrarian',
-    reason: 'Contrarian statement pattern triggers curiosity gap and comment engagement.',
-  },
-  {
-    topic: 'How I turned 1 long podcast episode into 12 viral clips',
-    niche: 'Repurposing & Growth',
-    tone: 'energetic',
-    reason: 'Personal story pattern with specific numerical transformation.',
-  },
-];
+/**
+ * No hardcoded topic suggestions.
+ *
+ * This used to ship four invented topics under the heading "Suggested Topics
+ * (Creator Intelligence)", each with a made-up justification — including a
+ * fabricated "+34% retention lift" statistic that was never measured anywhere.
+ * Suggestions are now derived from the user's own real project titles, so
+ * anything on screen is genuinely theirs.
+ */
+function useRealSuggestions(projects) {
+  return (Array.isArray(projects) ? projects : [])
+    .filter((p) => p && p.title && String(p.title).trim())
+    .slice(0, 4)
+    .map((p) => ({
+      topic: String(p.title).trim(),
+      tone: null,
+      niche: null,
+      reason: p.description ? String(p.description).slice(0, 120) : 'From your project.',
+    }));
+}
 
 export default function IdeaTopicCapture({
   projects = [],
@@ -41,11 +34,12 @@ export default function IdeaTopicCapture({
   onProceedToHooks,
 }) {
   const [activePreset, setActivePreset] = useState(null);
+  const suggestions = useRealSuggestions(projects);
 
   const applyIdea = (idea, idx) => {
     setActivePreset(idx);
     onTopicChange?.(idea.topic);
-    onToneChange?.(idea.tone);
+    if (idea.tone) onToneChange?.(idea.tone);
     if (idea.niche) onNicheChange?.(idea.niche);
   };
 
@@ -117,31 +111,38 @@ export default function IdeaTopicCapture({
 
         <div className="ia-recommender-section">
           <div className="card-title-row" style={{ marginTop: 20 }}>
-            <span className="ia-recommender-title">F3.6 Suggested Topics (Creator Intelligence)</span>
-            <span className="mut" style={{ fontSize: 12 }}>Click to auto-fill topic</span>
+            <span className="ia-recommender-title">Your Projects</span>
+            <span className="mut" style={{ fontSize: 12 }}>Click to use a project title as your topic</span>
           </div>
 
-          <div className="ia-recommender-grid">
-            {RECOMMENDED_IDEAS.map((item, idx) => (
-              <div
-                key={idx}
-                className={`ia-idea-suggestion ${activePreset === idx ? 'active' : ''}`}
-                onClick={() => applyIdea(item, idx)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') applyIdea(item, idx);
-                }}
-              >
-                <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
-                  <span className="ia-cat-chip stat">{item.niche}</span>
-                  <span className="pill">{item.tone}</span>
+          {suggestions.length > 0 ? (
+            <div className="ia-recommender-grid">
+              {suggestions.map((item, idx) => (
+                <div
+                  key={idx}
+                  className={`ia-idea-suggestion ${activePreset === idx ? 'active' : ''}`}
+                  onClick={() => applyIdea(item, idx)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') applyIdea(item, idx);
+                  }}
+                >
+                  <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+                    {item.niche ? <span className="ia-cat-chip stat">{item.niche}</span> : <span className="ia-cat-chip stat">Project</span>}
+                    {item.tone && <span className="pill">{item.tone}</span>}
+                  </div>
+                  <b>&ldquo;{item.topic}&rdquo;</b>
+                  <p className="ia-idea-reason">{item.reason}</p>
                 </div>
-                <b>“{item.topic}”</b>
-                <p className="ia-idea-reason">{item.reason}</p>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mut" style={{ fontSize: 13 }}>
+              No projects yet, so there are no suggestions to show. Type your topic above, or
+              create a project on the Dashboard first. Nothing here is pre-filled with invented ideas.
+            </p>
+          )}
         </div>
 
         <div style={{ marginTop: 20, textAlign: 'right' }}>
