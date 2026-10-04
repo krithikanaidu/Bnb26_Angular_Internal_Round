@@ -1,7 +1,9 @@
 const router = require('express').Router();
-const { Script, Hook, TranscriptSegment, Clip, EditProject, PublishJob, Metric } = require('../models');
+const { Script, Hook, TranscriptSegment, Clip, Asset, EditProject, PublishJob, PlatformVariant, Metric } = require('../models');
 const { generateHooks, generateScript } = require('../services/ai.service');
 const { alignScriptToTranscript, generateClips, adaptClip, PLATFORM_PRESETS } = require('../services/content.service');
+const { adaptMany, validateVariant, readEdl, PRESETS } = require('../services/adaptation.service');
+const { getTagsForTopic } = require('../services/trends.service');
 
 // --- Scripts & hooks ---
 router.post('/generate-hooks', async (req, res) => {
@@ -78,23 +80,151 @@ router.patch('/edits/:id', async (req, res) => {
   res.json(e);
 });
 
-// --- Multi-platform adaptation ---
+// --- Multi-platform adaptation (Domain 7: F7.1–F7.4) ---
+// POST /api/content/adapt { clip_id|clipId, platforms[], baseTags[], topicTags[],
+//   topic, niche, geo, cta }
+// → { engine, variants: [...], edl: {version, ctaSource, captionStyle}|null,
+//     trends: {source, tags} }
+// EDL: reads the clip's LATEST EditProject (CTA, caption style, crop focus) but
+// never writes it — re-adapting after a Studio edit picks up the new version.
+// Tags: explicit topicTags win; else auto-fetched from the internet (Google
+// Trends + Groq niche tags) for the given topic/niche.
 router.post('/adapt', async (req, res) => {
+  const clipId = req.body.clip_id || req.body.clipId;
+  const { platforms = ['tiktok', 'reels', 'shorts'], baseTags = [], cta } = req.body;
+  let { topicTags = [], topic = '', niche = '', geo = 'IN' } = req.body;
+  const clip = await Clip.findByPk(clipId);
+  if (!clip) return res.status(404).json({ error: 'clip not found' });
+
+  // 1. EDL — latest version for this clip (assumes another feature owns clips/EDLs)
+  const edit = await EditProject.findOne({ where: { clipId: clip.id }, order: [['version', 'DESC']] });
+  const edlInfo = readEdl(edit?.edl || {});
+  const edlMeta = edit ? { version: edit.version, ctaSource: edlInfo.cta ? `EDL v${edit.version}` : 'preset default', captionStyle: edlInfo.captionStyle || null } : null;
+
+  // 2. Source footage dimensions for the reframe plan (asset meta → else 16:9)
+  let sourceW = 1920, sourceH = 1080;
+  try {
+    if (clip.assetId) {
+      const asset = await Asset.findByPk(clip.assetId);
+      const mw = Number(asset?.meta?.width), mh = Number(asset?.meta?.height);
+      if (mw > 0 && mh > 0) { sourceW = mw; sourceH = mh; }
+    }
+  } catch { /* meta optional */ }
+
+  // 3. Trend + niche tags from the internet (skipped when caller supplies tags)
+  let trendsMeta = { source: 'caller-supplied', tags: topicTags };
+  if (!topicTags.length) {
+    const subject = topic || clip.title || '';
+    try {
+      const t = await getTagsForTopic({ topic: subject, niche, geo });
+      topicTags = t.tags;
+      trendsMeta = { source: t.source, tags: t.tags, trends: t.trends };
+    } catch (e) {
+      console.warn('[adapt] trends failed, continuing tagless:', e.message);
+    }
+  }
+
+  const adapted = await adaptMany(clip, platforms, {
+    baseTags, topicTags, cta,
+    edlInfo, edlVersion: edit?.version ?? null, sourceW, sourceH,
+  });
+  const saved = [];
+  for (const v of adapted) {
+    const existing = await PlatformVariant.findOne({ where: { clipId: clip.id, platform: v.platform } });
+    const row = existing
+      ? await existing.update({ ...v, clipId: clip.id })
+      : await PlatformVariant.create({ ...v, clipId: clip.id });
+    saved.push({ ...row.toJSON(), preset: PRESETS[v.platform], actions: v.actions });
+  }
+  res.json({ engine: adapted[0]?.engine || 'heuristic', variants: saved, edl: edlMeta, trends: trendsMeta });
+});
+
+// GET /api/content/trends?topic=&niche=&geo= — live trend titles + suggested tags
+router.get('/trends', async (req, res) => {
+  try {
+    const { topic = '', niche = '', geo = 'IN' } = req.query;
+    res.json(await getTagsForTopic({ topic, niche, geo }));
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'trends unavailable' });
+  }
+});
+
+// Legacy shape compat: some callers expect a bare array
+router.post('/adapt-legacy', async (req, res) => {
   const { clipId, platforms = ['tiktok', 'reels', 'shorts'] } = req.body;
   const clip = await Clip.findByPk(clipId);
   if (!clip) return res.status(404).json({ error: 'clip not found' });
   res.json(platforms.map((p) => adaptClip(clip, p)));
 });
 
+// GET /api/content/clips/:id/variants — list variants for a clip
+router.get('/clips/:id/variants', async (req, res) => {
+  const rows = await PlatformVariant.findAll({ where: { clipId: req.params.id }, order: [['platform', 'ASC']] });
+  res.json(rows.map((r) => ({ ...r.toJSON(), preset: PRESETS[r.platform] })));
+});
+
+// PATCH /api/content/variants/:id — edit caption/title/hashtags/cta, revalidate (F7.3)
+router.patch('/variants/:id', async (req, res) => {
+  const v = await PlatformVariant.findByPk(req.params.id);
+  if (!v) return res.status(404).json({ error: 'variant not found' });
+  const preset = PRESETS[v.platform];
+  const next = {
+    title: req.body.title ?? v.title,
+    caption: req.body.caption ?? v.caption,
+    hashtags: req.body.hashtags ?? v.hashtags,
+    cta: req.body.cta ?? v.cta,
+  };
+  const warnings = validateVariant({ ...next, duration: v.duration }, preset);
+  await v.update({ ...next, warnings, status: warnings.some((w) => ['DURATION_OVER', 'CAPTION_OVER'].includes(w.code)) ? 'needs_attention' : 'ready' });
+  res.json({ ...v.toJSON(), preset });
+});
+
 // --- Publish workflow ---
+// Accepts variant_id|variantId: caption/hashtags default from the variant (F7.3 → F8.1)
 router.post('/publish', async (req, res) => {
-  const { projectId, clipId, platform, scheduledAt, caption } = req.body;
-  const job = await PublishJob.create({ projectId, clipId, platform, scheduledAt, caption, status: scheduledAt ? 'scheduled' : 'draft', hashtags: ['#creatorai', `#${platform}`] });
-  res.status(201).json(job);
+  const clipId = req.body.clip_id || req.body.clipId;
+  const variantId = req.body.variant_id || req.body.variantId;
+  const { projectId, platform, scheduledAt, scheduled_at, caption, hashtags } = req.body;
+  let finalCaption = caption;
+  let finalTags = hashtags;
+  let project = projectId;
+  if (variantId) {
+    const v = await PlatformVariant.findByPk(variantId);
+    if (!v) return res.status(404).json({ error: 'variant not found' });
+    finalCaption = finalCaption ?? v.caption;
+    finalTags = finalTags ?? v.hashtags;
+  }
+  const at = scheduledAt || scheduled_at;
+  const job = await PublishJob.create({
+    projectId: project || null, clipId: clipId || null, variantId: variantId || null,
+    platform, scheduledAt: at || null, caption: finalCaption || 'New drop',
+    status: at ? 'scheduled' : 'draft', hashtags: finalTags || ['#creatorai', `#${platform}`],
+  });
+  res.status(201).json({ ...job.toJSON(), mode: 'simulated' });
 });
 router.get('/publish', async (req, res) => {
   const where = req.query.projectId ? { projectId: req.query.projectId } : {};
   res.json(await PublishJob.findAll({ where, order: [['createdAt', 'DESC']] }));
+});
+
+// POST /api/content/publish/:id/retry — clone a failed job as scheduled-now
+router.post('/publish/:id/retry', async (req, res) => {
+  const j = await PublishJob.findByPk(req.params.id);
+  if (!j) return res.status(404).json({ error: 'job not found' });
+  const clone = await PublishJob.create({
+    projectId: j.projectId, clipId: j.clipId, variantId: j.variantId, platform: j.platform,
+    scheduledAt: new Date(), caption: j.caption, status: 'scheduled', hashtags: j.hashtags,
+  });
+  res.status(201).json(clone);
+});
+
+// DELETE /api/content/publish/:id — cancel a scheduled/draft job
+router.delete('/publish/:id', async (req, res) => {
+  const j = await PublishJob.findByPk(req.params.id);
+  if (!j) return res.status(404).json({ error: 'job not found' });
+  if (!['scheduled', 'draft'].includes(j.status)) return res.status(409).json({ error: `cannot cancel a ${j.status} job` });
+  await j.destroy();
+  res.json({ ok: true });
 });
 
 // --- Creator intelligence ---

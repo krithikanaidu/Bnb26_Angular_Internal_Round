@@ -1,8 +1,11 @@
+const path = require('path');
+// Load .env from the backend folder even when started from the repo root, so
+// the merged services (llmProvider, trends, database) always see the keys.
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
-const path = require('path');
 const { sequelize } = require('./models');
 const { ensureBucket } = require('./config/supabase');
 
@@ -24,24 +27,32 @@ process.on('uncaughtException', (err) => {
 app.use('/media', express.static(path.join(__dirname, '..', 'media')));
 
 app.get('/api/health', (req, res) => {
-  const { sttProvider, hasStt, groqKey, openaiKey } = require('./clippedai/keys');
+  const { sttProvider, hasStt } = require('./clippedai/keys');
+  const { resolveProvider } = require('./services/llmProvider');
   const stt = sttProvider();
-  const llm = groqKey() ? 'groq' : (openaiKey() ? 'openai' : 'heuristic');
+  const p = resolveProvider();
   res.json({
     ok: true,
     service: 'creatorai-backend',
-    ai: llm,
+    // One LLM engine for every feature (Groq > OpenAI > heuristic).
+    ai: p.provider,
+    model: p.model || null,
     engines: {
       whisper: hasStt(),
       // Name + model only — never the key itself.
       stt: stt ? { name: stt.name, model: stt.model } : null,
-      copy: llm,
+      copy: p.provider,
+      trends: p.provider,
       reframe: 'auto',
     },
   });
 });
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/assets', require('./routes/assets'));
+// Ideation (AGENT/API.md §5) mounts before legacy /content so its
+// /hooks/generate + /scripts/* paths win over the older handlers.
+app.use('/api', require('./routes/ideation'));
+app.use('/api/content', require('./routes/ideation'));
 app.use('/api/content', require('./routes/content'));
 app.use('/api/clippedai', require('./routes/clippedai'));
 

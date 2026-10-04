@@ -29,6 +29,19 @@ const Script = define('Script', {
   body: { type: DataTypes.TEXT, allowNull: false },
   tone: { type: DataTypes.STRING, defaultValue: 'energetic' },
   targetPlatforms: { type: DataTypes.JSONB, defaultValue: ['tiktok', 'reels', 'shorts'] },
+  // ideation additions (AGENT/DATABASE.md)
+  version: { type: DataTypes.INTEGER, defaultValue: 1 },
+  hookPatternId: DataTypes.UUID,
+  beats: { type: DataTypes.JSONB, defaultValue: [] },
+  supporting: { type: DataTypes.JSONB, defaultValue: {} },
+});
+
+// Reusable hook templates behind the Ideation → Hook Generator flow.
+const HookPattern = define('HookPattern', {
+  pattern: { type: DataTypes.TEXT, allowNull: false },
+  category: { type: DataTypes.STRING, allowNull: false }, // question|statement|story|stat|contrarian
+  example: DataTypes.TEXT,
+  source: { type: DataTypes.STRING, defaultValue: 'viral-hooks' },
 });
 
 const Hook = define('Hook', {
@@ -37,6 +50,8 @@ const Hook = define('Hook', {
   text: { type: DataTypes.TEXT, allowNull: false },
   score: { type: DataTypes.FLOAT, defaultValue: 0 },
   style: { type: DataTypes.STRING, defaultValue: 'curiosity' },
+  patternId: DataTypes.UUID,
+  category: { type: DataTypes.STRING, defaultValue: 'statement' },
 });
 
 const TranscriptSegment = define('TranscriptSegment', {
@@ -89,12 +104,31 @@ const EditProject = define('EditProject', {
 const PublishJob = define('PublishJob', {
   projectId: DataTypes.UUID,
   clipId: DataTypes.UUID,
+  variantId: DataTypes.UUID,
   platform: { type: DataTypes.STRING, allowNull: false },
   scheduledAt: DataTypes.DATE,
   status: { type: DataTypes.STRING, defaultValue: 'draft' },
   caption: DataTypes.TEXT,
   hashtags: { type: DataTypes.JSONB, defaultValue: [] },
   resultUrl: DataTypes.TEXT,
+});
+
+// Multi-platform adaptation variants (AGENT/DATABASE.md §4.4, PUBLISHING.md §3)
+const PlatformVariant = define('PlatformVariant', {
+  clipId: DataTypes.UUID,
+  platform: { type: DataTypes.STRING, allowNull: false },
+  aspect: { type: DataTypes.STRING, defaultValue: '9:16' },
+  duration: DataTypes.FLOAT,
+  title: DataTypes.STRING,
+  caption: DataTypes.TEXT,
+  hashtags: { type: DataTypes.JSONB, defaultValue: [] },
+  cta: DataTypes.STRING,
+  captionStyle: DataTypes.STRING,
+  reframe: { type: DataTypes.JSONB, defaultValue: {} },
+  edlVersion: DataTypes.INTEGER,
+  warnings: { type: DataTypes.JSONB, defaultValue: [] },
+  status: { type: DataTypes.STRING, defaultValue: 'ready' }, // ready | needs_attention
+  assetId: DataTypes.UUID, // rendered variant file, null until rendered
 });
 
 const Metric = define('Metric', {
@@ -114,5 +148,12 @@ Project.hasMany(Script, { foreignKey: 'project_id' });
 Project.hasMany(Clip, { foreignKey: 'project_id' });
 Project.hasMany(ClipJob, { foreignKey: 'project_id' });
 Script.hasMany(Hook, { foreignKey: 'script_id' });
+Script.belongsTo(HookPattern, { foreignKey: 'hook_pattern_id' });
+Hook.belongsTo(HookPattern, { foreignKey: 'pattern_id' });
+Clip.hasMany(PlatformVariant, { foreignKey: 'clip_id' });
+PlatformVariant.belongsTo(Clip, { foreignKey: 'clip_id' });
 
-module.exports = { sequelize, Project, Asset, Script, Hook, TranscriptSegment, Clip, EditProject, PublishJob, Metric, ClipJob };
+module.exports = {
+  sequelize, Project, Asset, Script, Hook, HookPattern, TranscriptSegment, Clip,
+  EditProject, PublishJob, PlatformVariant, Metric, ClipJob,
+};

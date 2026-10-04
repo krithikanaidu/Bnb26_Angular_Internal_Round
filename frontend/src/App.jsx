@@ -7,6 +7,10 @@ import Scripts from './pages/Scripts';
 import Studio from './pages/Studio';
 import Publish from './pages/Publish';
 import ClipAI from './pages/ClipAI';
+// KRITIKA: ideation → hooks → script → beats studio, plus insights + calendar.
+import IdeationPage from './ideation-script-hook/IdeationPage';
+import Insights from './pages/Insights';
+import Calendar from './pages/Calendar';
 
 // Lazy: the editor pulls in pixi/mediabunny (~4MB) — keep it out of the main chunk.
 const VideoEditor = lazy(() => import('./pages/VideoEditor'));
@@ -48,9 +52,12 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="assets" element={<Assets />} />
           <Route path="scripts" element={<Scripts />} />
+          <Route path="ideation" element={<IdeationPage />} />
           <Route path="studio" element={<Studio />} />
           <Route path="publish" element={<Publish />} />
           <Route path="clips" element={<ClipAI />} />
+          <Route path="insights" element={<Insights />} />
+          <Route path="calendar" element={<Calendar />} />
         </Route>
         {/* Full-screen video editor (own header/panels/timeline) */}
         <Route

@@ -1,28 +1,15 @@
 const axios = require('axios');
 
-// Unified AI layer: uses OpenAI if key present, else deterministic heuristic
+// Unified AI layer: Groq (OpenAI-compatible) > OpenAI > deterministic heuristic
 // so the app works out-of-the-box for demos/hackathons.
 async function llm(prompt, fallback) {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) return fallback();
-  try {
-    const { data } = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: 'You are CreatorAI, an expert short-form content strategist and scriptwriter.' },
-          { role: 'user', content: prompt },
-        ],
-        temperature: 0.8,
-      },
-      { headers: { Authorization: `Bearer ${key}` } }
-    );
-    return data.choices[0].message.content;
-  } catch (e) {
-    console.warn('[ai] OpenAI failed, using heuristic:', e.message);
-    return fallback();
-  }
+  const { chatJson } = require('./llmProvider');
+  const { engine, data } = await chatJson({
+    system: 'You are CreatorAI, an expert short-form content strategist and scriptwriter.',
+    user: prompt, temperature: 0.8, json: false,
+  });
+  if (data) return data;
+  return fallback();
 }
 
 const HOOK_STYLES = ['curiosity', 'contrarian', 'howto', 'story', 'listicle', 'shock'];
