@@ -22,7 +22,7 @@ Video ─▶ [3 Transcribe] ─▶ [4 Embed] ─▶ [5 Align] ─▶ [6 Clip sco
 | 0 | Ideation | LLM + metrics SQL | Rule-based from top categories | ⏳ |
 | 1 | Hook generation | LLM + hook-pattern retrieval | Pattern templates filled with topic | ✅ |
 | 2 | Script and beats | LLM | Outline template | ✅ |
-| 3 | Transcription | WhisperX or Whisper API | Seeded demo transcript | 🔧 (seed only today) |
+| 3 | Transcription | Whisper API (OpenAI or Groq) | **None — job fails loudly** | ✅ (no fabricated fallback) |
 | 4 | Embedding | Sentence-transformers or hosted embeddings | Skipped (keyword overlap) | ⏳ |
 | 5 | Alignment | Cosine similarity (+ optional LLM rerank) | Keyword overlap | ✅ heuristic / ⏳ embedding |
 | 6 | Clip scoring | Weighted score function | Same (deterministic) | ✅ v1 / 🔧 script-aware |
@@ -61,7 +61,7 @@ Provider abstraction (so Claude or others can be swapped in):
 // services/llm.js
 async function complete({ system, user, json = true, temperature = 0.7 }) { /* provider switch */ }
 ```
-Configured via `LLM_PROVIDER=openai|anthropic|none`.
+Configured via `AI_PROVIDER=groq|openai|heuristic|none` (blank = auto-detect from keys).
 
 ---
 
@@ -112,15 +112,20 @@ Return {count} hooks as [{"text":"","category":"question|statement|story|stat|co
 
 **Heuristic fallback:** outline template with the topic substituted and generic beats.
 
-### 3.3 Transcription 🔧
+### 3.3 Transcription ✅
 **Input:** video or audio asset.
 **Output:** `transcript_segments` with `start`, `end`, `text`, `words[{w,start,end}]`, optional `speaker`.
 
+Runs inside ClipAI (`backend/src/clippedai/transcribe.js`), not a separate worker:
+
 | Mode | Details |
 |---|---|
-| WhisperX (worker) | VAD → batched Whisper → forced alignment → optional diarization |
-| Whisper API | Hosted; word timestamps via `timestamp_granularities=["word"]` |
-| Seeded | Demo transcript attached on upload (current behavior) |
+| OpenAI Whisper | `whisper-1`, word timestamps via `timestamp_granularities=["word"]` |
+| Groq | `whisper-large-v3-turbo` — free tier |
+| Neither | Job stops with an explicit error. **A transcript is never invented.** |
+
+Audio is extracted to 16 kHz mono before STT. Filler words (`umm`, `uh`, `like`, …) are
+scrubbed from caption text, and filler-only ranges are skipped when writing clips.
 
 Segmenting rule: merge words into 5–15 s segments at sentence boundaries, so each segment is a meaningful unit for matching.
 
@@ -226,16 +231,26 @@ Agents are called by routes or jobs; the orchestrator also advances project stat
 
 ## 5. Configuration
 
+Provider resolution lives in `services/llmProvider.js` (Groq → OpenAI → heuristic) and
+`clippedai/keys.js` (Whisper: OpenAI → Groq → none). Full table in the root
+[`README.md`](../README.md#6-environment-variables-reference).
+
 | Variable | Purpose | Default |
 |---|---|---|
-| `LLM_PROVIDER` | `openai`, `anthropic` or `none` | `openai` if key present |
-| `OPENAI_API_KEY` | OpenAI access | unset → heuristic |
-| `LLM_MODEL` | Model name | provider default |
-| `LLM_TIMEOUT_MS` | Per-call timeout | 20000 |
-| `ALIGN_MATCH_THRESHOLD` | Matched score | 0.65 |
-| `ALIGN_WEAK_THRESHOLD` | Weak score | 0.45 |
-| `CLIP_WEIGHTS` | JSON of score weights | see §3.6 |
-| `TRANSCRIBE_MODE` | `whisperx`, `api`, `seed` | `seed` |
+| `AI_PROVIDER` | Force `groq`, `openai`, `heuristic` or `none` | auto-detect from keys |
+| `GROQ_API_KEY` / `GROQ_MODEL` | Groq copy for hooks/scripts/adaptation/trends | `openai/gpt-oss-20b` |
+| `CLIPAI_GROQ_MODEL` | Groq copy for ClipAI ranking + titles | `openai/gpt-oss-20b` |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | OpenAI copy and Whisper transcription | `gpt-4o-mini` |
+| `CLIPAI_WHISPER_MODEL` | OpenAI STT model | `whisper-1` |
+| `CLIPAI_GROQ_WHISPER_MODEL` | Groq STT model | `whisper-large-v3-turbo` |
+| `CLIPAI_LANGUAGE` | Force transcription language | `auto` |
+| `CLIPAI_STT_PROMPT` | Whisper hint for punctuation/names | unset |
+| `CLIPAI_MIN_CLIP_SEC` / `CLIPAI_MAX_CLIP_SEC` | Clip length bounds | `45` / `120` |
+| `YOUTUBE_API_KEY` | Real YouTube trend signals | unset → labeled heuristic source |
+
+Score weights are **not** configurable by env. They live in
+`backend/src/clippedai/score.js` as `CLIPAI_SCORE_WEIGHTS` (engagement .28, cohesion .24,
+hook .24, speech .14, opener .10), always sum to 1, and are served by `/api/health`.
 
 ---
 

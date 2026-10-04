@@ -71,9 +71,10 @@
 - **How:** `GET /api/assets`; metadata extracted on upload (ffprobe ⏳).
 - **Value:** A creator-focused digital asset manager without a heavy DAM deployment.
 
-### F2.3 Automatic Transcription 🔧 · M
+### F2.3 Automatic Transcription ✅ · M
 - **What:** Speech to text with word-level timestamps (and optional speaker labels).
-- **How:** Job → Python worker running WhisperX (or hosted Whisper API) → `transcript_segments` with `words`. Seeded demo transcripts are used today.
+- **How:** Job → ClipAI extracts 16 kHz mono audio → Whisper API (OpenAI `whisper-1`, else Groq `whisper-large-v3-turbo`) → `transcript_segments` with `words`. Filler words are scrubbed from caption text.
+- **No key:** the job fails with an explicit error. A transcript is never fabricated or seeded.
 - **Value:** Makes footage searchable and enables alignment and captions.
 - **Docs:** [`AI_PIPELINE.md`](./AI_PIPELINE.md) §3.3
 
@@ -171,7 +172,7 @@
 
 ### F5.4 Speaker Diarization and Tracking ⏳ · C
 - **What:** Identify who is speaking; keep the active speaker framed in 9:16.
-- **How:** pyannote via WhisperX; speaker labels on segments; crop focus follows speaker.
+- **How:** a diarization service (pyannote via a Python worker, or a hosted API); speaker labels on segments; crop focus follows speaker.
 - **Value:** Essential for podcasts and interviews.
 - **Persona:** Arjun
 
@@ -333,10 +334,10 @@
 - **Value:** The product never breaks in a demo.
 - **Docs:** [`AI_PIPELINE.md`](./AI_PIPELINE.md) §2
 
-### F10.4 Demo / Seed Mode ✅ · M
-- **What:** One click fills a project with transcript, clips and metrics.
-- **How:** `POST /api/content/seed`; seeded metrics flagged and badged in the UI.
-- **Value:** Reliable demos and easy testing.
+### F10.4 Demo / Seed Mode ⛔ Removed · M
+- **Was:** One click filled a project with transcript, clips and metrics via `POST /api/content/seed`.
+- **Why removed:** it produced convincing but fabricated transcripts and metrics, which is worse than an empty state — viewers could not tell real from invented.
+- **Instead:** pages show honest loading / empty / error states. `backend/scripts/clipai-*.js` generate synthetic media for genuine end-to-end testing when you actually want fixtures.
 
 ### F10.5 MCP Tool Exposure ⏳ · C
 - **What:** Expose CreatorAi actions (generate hooks, find clips, render) as MCP tools so external agents can drive the platform; optionally consume FFmpeg/YouTube MCP servers.
@@ -388,7 +389,7 @@ Story text and acceptance criteria: [`PRD.md`](./PRD.md) §4.
 
 | Feature(s) | Reference project | How it's used |
 |---|---|---|
-| F2.3, F5.4 | WhisperX, pyannote-audio | Library in the Python worker |
+| F2.3 | OpenAI Whisper / Groq whisper-large-v3-turbo | Hosted STT API used by ClipAI |
 | F5.1–F5.2 | AutoClip, OpenShorts, jBahr's Clip Generator, ClippedAI | Pipeline pattern (transcribe → score → crop → caption) |
 | F3 (script-to-video ideas) | InsightCut | Storyboard concept reference |
 | F6.4 | Twick, react-video-editor | Timeline UI SDK |
@@ -433,11 +434,9 @@ F1.1, F1.3–F1.5 → F2.1–F2.3, F2.6 → F3.1–F3.5 → F4.1–F4.3 → F5.1
 | 9 | [`EDL_FORMAT.md`](./EDL_FORMAT.md) | Editable edit-decision JSON spec | F6 |
 | 10 | [`PUBLISHING.md`](./PUBLISHING.md) | Presets, adaptation rules, scheduling, connectors | F7, F8 |
 | 11 | [`SETUP.md`](./SETUP.md) | Supabase, env variables, running, troubleshooting | F1.1, F2.6 |
-| 12 | `DEMO.md` | Two-minute demo script | MVP cut |
-| 13 | `ROADMAP.md` | Future phases and team split | All ⏳ |
-| 14 | `CONTRIBUTING.md` | Conventions, branching, PR process | n/a |
-
-Documents 12–14 are in the next batch.
+| 12 | [`../README.md`](../README.md) | Root setup, full architecture, API map, troubleshooting | All |
+| 13 | [`../MERGE_NOTES.md`](../MERGE_NOTES.md) | Branch merge record | All |
+| 14 | [`DESIGN.md`](./DESIGN.md) | Page-by-page design | F6, F7, F8 |
 
 ---
 

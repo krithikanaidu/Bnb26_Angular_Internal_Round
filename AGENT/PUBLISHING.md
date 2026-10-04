@@ -139,12 +139,12 @@ interface Connector {
 
 | Connector | Mode | Approach |
 |---|---|---|
-| Simulated | `simulated` | Always available; marks the job published, produces seeded metrics, UI labeled "Simulated" |
+| Scheduled-record only | `record` | **Current behavior.** Job is stored and tracked through draft → scheduled → published. Nothing is uploaded to the platform, and the UI says so |
 | Aggregator (e.g. upload-post API) ⏳ | `real` | One API key posts to several networks; fastest way to get **one real platform** live |
 | YouTube Data API ⏳ | `real` | Official upload; requires OAuth consent and quota awareness |
 | Others (TikTok, Instagram, X, LinkedIn) | Post-MVP | Each needs developer app approval and OAuth |
 
-MVP rule: **one real connector, the rest simulated, clearly labeled.**
+MVP rule: **one real connector, the rest tracked as records only — never labeled as published.**
 
 Account connection (`platform_accounts`): store `platform`, `handle`, `status` and a `token_ref` pointing to a secret, never the raw token in the DB or logs.
 
@@ -155,12 +155,12 @@ Account connection (`platform_accounts`): store `platform`, `handle`, `status` a
 | Source | How |
 |---|---|
 | Real connector | Poll `fetchMetrics` at 1 h, 24 h, 72 h and 7 d after publishing |
-| Simulated | Generate plausible curves seeded by hook category and platform; flagged `source = 'seed'` |
-| Manual ⏳ | CSV import or manual entry |
+| Manual | ⏳ | CSV import or manual entry |
 
 Stored in `metrics`: `views`, `likes`, `comments`, `shares`, `watch_time`, `captured_at`, `source`.
 
-Rule: the Insights UI shows a "demo data" badge whenever seeded metrics are included.
+**No synthetic metrics are generated.** If no connector has reported real numbers for a job,
+Insights shows the job without performance figures rather than inventing a curve.
 
 ---
 

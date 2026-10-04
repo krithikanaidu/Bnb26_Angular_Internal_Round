@@ -12,9 +12,8 @@
 | npm | 9+ | Dependencies |
 | Git | any | Cloning |
 | Supabase account | free tier is enough | Postgres, Storage, Auth |
-| FFmpeg | 5+ | Rendering ⏳ (worker or backend host) |
-| Python | 3.10+ | AI worker ⏳ |
-| OpenAI API key | optional | Better AI output; app works without it |
+| FFmpeg | not needed | Bundled via npm (`ffmpeg-static`, `ffprobe-static`) |
+| Groq or OpenAI API key | recommended | AI copy + transcription. App runs without, but ClipAI transcription requires one |
 
 Check:
 ```bash
@@ -80,71 +79,73 @@ If `supabase/` includes a storage setup script, run it instead of the manual ste
 ```env
 # Server
 PORT=5000
-NODE_ENV=development
-CORS_ORIGIN=http://localhost:5173
+FRONTEND_URL=http://localhost:5173     # allowed CORS origin(s), comma-separated
 
-# Database (Supabase pooler URL, SSL on)
+# Database (Supabase Transaction pooler, :6543; SSL is always on and not configurable)
 DATABASE_URL=postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres
-DB_SSL=true
 
 # Supabase
 SUPABASE_URL=https://<ref>.supabase.co
 SUPABASE_SERVICE_KEY=<service_role_key>
 SUPABASE_BUCKET=creator-assets
 
-# AI (optional; heuristic fallback when empty)
-OPENAI_API_KEY=
-LLM_PROVIDER=openai
-LLM_MODEL=
-LLM_TIMEOUT_MS=20000
+# AI (Groq is preferred; heuristic engine when both keys are empty)
+AI_PROVIDER=                # groq | openai | heuristic  (blank = auto-detect)
+GROQ_API_KEY=gsk_...
+GROQ_MODEL=openai/gpt-oss-20b
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+YOUTUBE_API_KEY=            # optional: real YouTube trend signals
 
-# Uploads
-MAX_UPLOAD_MB=500
-
-# Planned
-JWT_SECRET=                 # only if verifying Supabase JWT locally
-WORKER_URL=http://localhost:8000
-TRANSCRIBE_MODE=seed        # seed | api | whisperx
-UPLOAD_POST_API_KEY=        # one real publishing connector
+# ClipAI (all optional — bundled ffmpeg/ffprobe/yt-dlp are used by default)
+CLIPAI_MIN_CLIP_SEC=45
+CLIPAI_MAX_CLIP_SEC=120
+CLIPAI_PRESET=veryfast
+CLIPAI_CRF=20
+CLIPAI_LANGUAGE=auto
+CLIPAI_WHISPER_MODEL=whisper-1
+CLIPAI_GROQ_WHISPER_MODEL=whisper-large-v3-turbo
+CLIPAI_GROQ_MODEL=openai/gpt-oss-20b
+CLIPAI_STT_CHUNK_SEC=600
+CLIPAI_YT_MAX_MIN=120
 ```
 
 ### 3.2 Frontend: `frontend/.env`
 
 ```env
 VITE_API_URL=http://localhost:5000/api
-# Planned (auth)
-VITE_SUPABASE_URL=https://<ref>.supabase.co
-VITE_SUPABASE_ANON_KEY=<anon_key>
+
+# Video Editor (all optional until you use that feature)
+VITE_R2_BUCKET_NAME=
+VITE_R2_ACCESS_KEY_ID=
+VITE_R2_SECRET_ACCESS_KEY=
+VITE_R2_ACCOUNT_ID=
+VITE_R2_PUBLIC_DOMAIN=
+VITE_DEEPGRAM_API_KEY=
+VITE_DEEPGRAM_URL=https://api.deepgram.com/v1
+VITE_DEEPGRAM_MODEL=nova-2
+VITE_PEXELS_API_KEY=
 ```
 
 Only variables prefixed with `VITE_` are exposed to the browser.
 
-### 3.3 Worker (planned): `worker/.env` ⏳
+### 3.3 Variable reference
 
-```env
-PORT=8000
-DATABASE_URL=<same as backend>
-SUPABASE_URL=<same>
-SUPABASE_SERVICE_KEY=<service_role_key>
-WHISPER_MODEL=small            # tiny | base | small | medium
-DEVICE=cpu                     # cpu | cuda
-HF_TOKEN=                      # needed only for pyannote diarization
-EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-```
-
-### 3.4 Variable reference
+The authoritative, code-verified list of environment variables is in the root
+[`README.md`](../README.md#6-environment-variables-reference). There is **no `worker/.env`**
+— transcription and rendering run in-process via the bundled ffmpeg binaries.
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
-| `DATABASE_URL` | yes | none | Pooler URL |
-| `DB_SSL` | yes | `true` | Needed for Supabase |
+| `DATABASE_URL` | yes | none | Supabase pooler URL. Startup fails without it |
 | `SUPABASE_URL` | yes | none | |
 | `SUPABASE_SERVICE_KEY` | yes | none | Server-side only |
 | `SUPABASE_BUCKET` | no | `creator-assets` | |
-| `OPENAI_API_KEY` | no | empty | Empty → heuristic engine |
-| `CORS_ORIGIN` | no | `http://localhost:5173` | Comma-separate for several origins |
+| `AI_PROVIDER` | no | auto-detect | `groq`, `openai`, `heuristic` or `none` |
+| `GROQ_API_KEY` | no | empty | Preferred provider; empty → next option |
+| `OPENAI_API_KEY` | no | empty | Also used for Whisper transcription |
+| `FRONTEND_URL` | no | `http://localhost:5173` | Allowed CORS origin(s), comma-separated |
 | `PORT` | no | 5000 | |
-| `MAX_UPLOAD_MB` | no | 500 | |
 
 Keep a committed `.env.example` with **names only, no secrets**. Add `.env` to `.gitignore`.
 
@@ -176,24 +177,37 @@ npm run dev              # Vite → http://localhost:5173
 4. Generate hooks on **Scripts**. With no OpenAI key, the response shows `engine: "heuristic"`.
 
 ### Seed demo data
-Use the Dashboard "Seed demo" action (calls `POST /api/content/seed`) to create demo transcripts and metrics so every page has content.
+There is no seed/demo endpoint — the app never fabricates transcripts or metrics. To populate
+real data: upload footage on `/assets`, run transcription from `/clips` (ClipAI) or the Video
+Editor, then generate a script and clips. Every page will show an honest empty state until then.
 
 ---
 
-## 5. Run the AI Worker (planned) ⏳
+## 5. Verify the AI Engines
 
 ```bash
-cd worker
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --port 8000 --reload
+curl http://localhost:5000/api/health
 ```
 
-Notes:
-- First run downloads model weights (hundreds of MB). Do it before demo day.
-- CPU is fine for short clips with `WHISPER_MODEL=small` or smaller. Use a GPU (`DEVICE=cuda`) for longer footage.
-- Diarization needs a Hugging Face token and acceptance of the gated model terms.
-- Install FFmpeg on the same machine (`brew install ffmpeg` / `sudo apt install ffmpeg`).
+Check the returned `engines` block:
+
+| Field | Meaning |
+|---|---|
+| `ai` / `engines.copy` / `engines.titles` / `engines.trends` | Provider actually serving AI copy |
+| `engines.whisper` | `true` when a real speech-to-text provider is configured |
+| `engines.stt` | STT provider name and model (`null` when none) |
+| `scoreWeights` | The real ClipAI scoring weights, served from `score.js` |
+
+If `engines.whisper` is `false`, set `GROQ_API_KEY` (free) or `OPENAI_API_KEY` and restart.
+ClipAI will refuse to invent a transcript without one — that is intentional.
+
+Useful live checks:
+
+```bash
+node scripts/clipai.test.js       # pipeline + silence/loudness regression (no key needed)
+node scripts/clipai-stt-test.js   # real transcription (needs a key)
+node scripts/clipai-e2e.js        # full job → clips
+```
 
 ---
 
@@ -214,8 +228,7 @@ Notes:
 | Component | Suggested host | Notes |
 |---|---|---|
 | Frontend | Vercel or Netlify | Set `VITE_API_URL` to the deployed API |
-| Backend | Render, Railway or Fly.io | Set all backend env vars; set `CORS_ORIGIN` to the frontend URL |
-| Worker | Render, Railway, Fly.io or a GPU host | Needs FFmpeg and enough RAM for models |
+| Backend | Render, Railway or Fly.io | Set all backend env vars; set `FRONTEND_URL` to the frontend origin. ffmpeg is bundled via npm — no system install needed |
 | Database / Storage | Supabase (managed) | Use the pooler URL |
 
 Large uploads: if the host limits request size, move to **direct-to-Storage uploads** with signed upload URLs from the backend.
@@ -226,17 +239,19 @@ Large uploads: if the host limits request size, move to **direct-to-Storage uplo
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `SequelizeConnectionError` / timeout | Wrong URL, or direct (non-pooler) URL | Use the pooler URL; check password encoding |
-| `no pg_hba.conf entry` / SSL error | SSL off | Set `DB_SSL=true` and dialect SSL options |
-| Upload returns 500 | Bucket missing or wrong name | Create `creator-assets`; check `SUPABASE_BUCKET` |
-| `Invalid API key` from Supabase | Wrong key or anon vs service confusion | Use the service role key on the backend |
-| CORS error in the browser | Origin mismatch | Set `CORS_ORIGIN` to the exact frontend URL |
-| Frontend calls the wrong server | Missing `VITE_API_URL` | Set it and restart Vite |
-| AI always `heuristic` | No/invalid `OPENAI_API_KEY` or timeout | Check the key and logs; heuristic is expected without a key |
-| Large upload fails | multer or proxy limit | Raise `MAX_UPLOAD_MB`; use signed uploads in production |
-| `type "vector" does not exist` | pgvector not enabled | Run `create extension vector;` |
-| Worker can't find FFmpeg | Not installed or not on PATH | Install FFmpeg; verify with `ffmpeg -version` |
-| Slow transcription | CPU + large model | Use a smaller model or the Whisper API |
+| Backend exits: `DATABASE_URL is required` | `.env` missing or not filled | Copy `.env.example` → `.env` and set the Transaction pooler URL. There is no localhost fallback |
+| `SequelizeConnectionError` / timeout | Wrong URL, or direct (non-pooler) URL | Use the pooler URL (`:6543`); URL-encode special chars in the password |
+| SSL / `no pg_hba.conf entry` | Direct connection blocked | Use the pooler URL. SSL is always on and not configurable |
+| Upload returns 500 | Bucket missing or wrong name | The backend creates `creator-assets` at boot; check `SUPABASE_BUCKET` |
+| `Invalid API key` from Supabase | anon key used instead of service role | Use the service role key on the backend only |
+| CORS error in the browser | Origin mismatch | Set `FRONTEND_URL` to the exact frontend origin |
+| Frontend calls the wrong server | Missing `VITE_API_URL` | Set it and restart Vite — Vite only reads `.env` at startup |
+| AI always reports `heuristic` | No valid key, or `AI_PROVIDER` forcing it | Check `GROQ_API_KEY` / `OPENAI_API_KEY` and the backend logs |
+| ClipAI says transcription unavailable | No STT key | Set `GROQ_API_KEY` (free) or `OPENAI_API_KEY` and restart |
+| ClipAI wrongly rejects a video as silent | Old build that did not capture ffmpeg stderr | Fixed in `clippedai/ffmpeg.js` — update, restart, re-run the job |
+| Large upload fails | multer memory limit or proxy limit | Uploads are held in memory by multer; move to signed direct-to-Storage uploads for large files |
+| `type "vector" does not exist` | pgvector not enabled (embeddings are ⏳ anyway) | Run `create extension vector;` if you intend to use embeddings |
+| Job stuck in `processing` | Process died mid-job | Restart the backend — `recoverStuckJobs()` reclaims them |
 
 ---
 
@@ -244,7 +259,7 @@ Large uploads: if the host limits request size, move to **direct-to-Storage uplo
 
 - [ ] `.env` files are in `.gitignore`; no secrets in the repo history
 - [ ] Service role key is only on the server
-- [ ] Storage bucket is private
+- [ ] Storage bucket access is intentional (the app currently uses a **public** bucket for playback URLs — add signed URLs before handling private client footage)
 - [ ] RLS enabled on user tables (when auth is live)
 - [ ] CORS restricted to known origins in production
 - [ ] Upload type and size validation on

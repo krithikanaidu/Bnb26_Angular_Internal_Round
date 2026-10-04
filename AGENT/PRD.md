@@ -112,7 +112,7 @@ Full persona detail lives in this PRD; the story map below is keyed to them.
 
 ### Must (end-to-end demo)
 1. Auth and workspace (Supabase Auth)
-2. Video upload → real transcription (WhisperX or Whisper API), seeded fallback
+2. Video upload → real transcription (Whisper API via OpenAI or Groq). No key → job fails loudly; never a seeded fallback
 3. Hook and script generation (LLM + hook-pattern retrieval, heuristic fallback)
 4. Script ↔ transcript alignment with gap view
 5. Ranked clip suggestions with scores and reasons
@@ -120,7 +120,7 @@ Full persona detail lives in this PRD; the story map below is keyed to them.
 7. FFmpeg render to 9:16 with burned captions
 8. Platform adaptation presets (Shorts, Reels, TikTok, X, LinkedIn)
 9. Publish queue with scheduling; one real connector, others simulated
-10. Pipeline dashboard and insights (seeded plus real metrics)
+10. Pipeline dashboard and insights (real metrics only; empty state when there is none)
 
 ### Should
 Semantic asset search UI · time-coded review comments · content calendar · revenue tracker
@@ -183,7 +183,7 @@ Payments/payouts · OAuth for every platform · mobile apps · multi-tenant team
 | Upload → first publishable clip | Under 10 min for a 10-min video |
 | AI-suggested edit ops accepted | 60%+ in demo testing |
 | Platforms published per source video | 3+ |
-| Insight accuracy (recommended hook style matches top performer in data) | Matches on seeded data |
+| Insight accuracy (recommended hook style matches top performer in data) | Matches on real published data |
 | Manual editing time saved (self-reported) | 50%+ |
 
 ---
@@ -192,7 +192,7 @@ Payments/payouts · OAuth for every platform · mobile apps · multi-tenant team
 
 **Assumptions:** teams have Supabase and (optionally) OpenAI credentials; demo footage is short and pre-validated.
 
-**Dependencies:** Supabase (DB, Storage, Auth), an LLM provider, FFmpeg, WhisperX or a hosted transcription API, a posting API for one real platform.
+**Dependencies:** Supabase (DB, Storage, Auth), an LLM provider (Groq or OpenAI), FFmpeg (bundled via npm), a Whisper API key for transcription, a posting API for one real platform.
 
 | Risk | Impact | Mitigation |
 |---|---|---|
@@ -207,4 +207,4 @@ Payments/payouts · OAuth for every platform · mobile apps · multi-tenant team
 
 ## 11. Related Docs
 
-[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`DATABASE.md`](./DATABASE.md) · [`API.md`](./API.md) · [`AI_PIPELINE.md`](./AI_PIPELINE.md) · [`ROADMAP.md`](./ROADMAP.md)
+[`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`DATABASE.md`](./DATABASE.md) · [`API.md`](./API.md) · [`AI_PIPELINE.md`](./AI_PIPELINE.md) · [`FEATURES.md`](./FEATURES.md)

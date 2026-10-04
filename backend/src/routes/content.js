@@ -32,7 +32,7 @@ router.post('/align', async (req, res) => {
   const { scriptBody, assetId, projectId } = req.body;
   const where = assetId ? { assetId } : projectId ? { projectId } : {};
   const segments = await TranscriptSegment.findAll({ where, order: [['startSec', 'ASC']] });
-  if (!segments.length) return res.status(400).json({ error: 'No transcript segments. Upload footage first (demo segments auto-seed).' });
+  if (!segments.length) return res.status(400).json({ error: 'No transcript segments for this asset. Upload footage and run transcription first (ClipAI or the Video Editor).' });
   res.json({ alignment: alignScriptToTranscript(scriptBody, segments), segments });
 });
 
@@ -194,13 +194,24 @@ router.post('/publish', async (req, res) => {
     finalCaption = finalCaption ?? v.caption;
     finalTags = finalTags ?? v.hashtags;
   }
+  if (!platform || !PRESETS[platform]) {
+    return res.status(400).json({ error: `platform must be one of: ${Object.keys(PRESETS).join(', ')}` });
+  }
   const at = scheduledAt || scheduled_at;
+  // Caption/hashtags come from the variant or the caller. If neither supplied
+  // them, store empty and let the UI prompt — do not invent a caption or tag.
   const job = await PublishJob.create({
     projectId: project || null, clipId: clipId || null, variantId: variantId || null,
-    platform, scheduledAt: at || null, caption: finalCaption || 'New drop',
-    status: at ? 'scheduled' : 'draft', hashtags: finalTags || ['#creatorai', `#${platform}`],
+    platform,
+    scheduledAt: at || null,
+    caption: finalCaption || '',
+    status: at ? 'scheduled' : 'draft',
+    hashtags: Array.isArray(finalTags) ? finalTags : [],
   });
-  res.status(201).json({ ...job.toJSON(), mode: 'simulated' });
+  // mode is always 'record': no platform connector is wired up, so this row is
+  // a scheduling record, not a published post. Reporting 'simulated' implied a
+  // post attempt happened; this says plainly that nothing was uploaded.
+  res.status(201).json({ ...job.toJSON(), mode: 'record', posted: false });
 });
 router.get('/publish', async (req, res) => {
   const where = req.query.projectId ? { projectId: req.query.projectId } : {};

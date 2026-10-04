@@ -16,7 +16,7 @@
 ## Assets (`/assets`) — `pages/Assets.jsx`
 - Upload video/image/audio (multipart → Supabase Storage; row in `assets` table).
 - Asset grid: file name, kind, duration, size, public URL.
-- Transcript viewer (auto-seeded demo transcript segments on upload).
+- Transcript viewer (real transcript segments written by ClipAI / Video Editor transcription).
 
 ## Studio (`/studio`) — `pages/Studio.jsx`
 - Align script beats to transcript segments (gap detection).

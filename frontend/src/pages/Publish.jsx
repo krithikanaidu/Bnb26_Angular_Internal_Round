@@ -24,8 +24,12 @@ export default function Publish() {
   const [err, setErr] = useState(null);
 
   const load = async () => {
-    const [c, j] = await Promise.all([api.get('/content/clips'), api.get('/content/publish')]);
-    setClips(c.data); setJobs(j.data);
+    try {
+      const [c, j] = await Promise.all([api.get('/content/clips'), api.get('/content/publish')]);
+      setClips(c.data); setJobs(j.data);
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Could not load clips and publish jobs — is the backend running?');
+    }
   };
   useEffect(() => { load(); }, []);
 
@@ -82,18 +86,31 @@ const withEdl = r.data.find((v) => v.edlVersion != null);
   };
 
   const saveVariant = async (id, draft) => {
-    const { data } = await api.patch(`/content/variants/${id}`, draft);
-    setVariants((vs) => vs.map((v) => (v.id === id ? { ...v, ...data } : v)));
+    try {
+      const { data } = await api.patch(`/content/variants/${id}`, draft);
+      setVariants((vs) => vs.map((v) => (v.id === id ? { ...v, ...data } : v)));
+      setErr(null);
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Could not save the variant.');
+      throw e; // let the button show its own failure state
+    }
   };
 
   const schedule = async (variant, when) => {
     const clip = clips.find((c) => c.id === clipId);
-    await api.post('/content/publish', {
-      variant_id: variant.id, clipId, projectId: clip?.projectId,
-      platform: variant.platform, caption: variant.caption,
-      scheduledAt: when ? new Date(when) : null,
-    });
-    load();
+    try {
+      await api.post('/content/publish', {
+        variant_id: variant.id, clipId, projectId: clip?.projectId,
+        platform: variant.platform, caption: variant.caption,
+        scheduledAt: when ? new Date(when) : null,
+      });
+      setErr(null);
+      load();
+    } catch (e) {
+      // Previously unhandled: the rejection surfaced as an unhandled promise and
+      // the list silently kept showing the old state.
+      setErr(e.response?.data?.error || 'Could not create the publish job.');
+    }
   };
 
   const retry = async (id) => {
@@ -173,11 +190,17 @@ const withEdl = r.data.find((v) => v.edlVersion != null);
       )}
 
       <h2>Scheduled / published</h2>
+      <p className="mut"><small>Scheduling records only — no platform connector is wired up yet, so nothing here uploads to TikTok/Reels/Shorts/X.</small></p>
       {jobs.map((j) => (
         <div className="card" key={j.id}>
           <b>{j.platform}</b>{' '}
           <span className="pill"><span className="dot" style={{ background: j.status === 'published' ? 'var(--olive)' : j.status === 'failed' ? 'var(--coral)' : 'var(--orchid)' }} />{j.status}</span>{' '}
-          <span className="mut"><small>{j.caption} · {j.scheduledAt ? new Date(j.scheduledAt).toLocaleString() : 'draft'}</small></span>
+          <span className="mut"><small>
+            {/* No caption is a real, visible state — the server no longer invents one. */}
+            {j.caption ? j.caption : <em>no caption</em>}
+            {' · '}
+            {j.scheduledAt ? new Date(j.scheduledAt).toLocaleString() : 'draft'}
+          </small></span>
           <div className="row" style={{ marginTop: 8 }}>
             {j.status === 'failed' && <button className="coral" onClick={() => retry(j.id)}>Retry publish</button>}
             {['scheduled', 'draft'].includes(j.status) && <button className="ghost" onClick={() => cancel(j.id)}>Cancel</button>}

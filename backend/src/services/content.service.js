@@ -69,14 +69,31 @@ function withLegacy(p) {
 
 const PLATFORM_PRESETS = Object.fromEntries(Object.entries(PRESETS).map(([k, p]) => [k, withLegacy(p)]));
 
+// Legacy single-platform adapter, kept for /content/adapt-legacy.
+// It derives everything it can from the clip and returns nulls for what it
+// cannot know. It previously invented a caption, three hashtags and an emoji
+// for every clip, including ones with no text at all.
 function adaptClip(clip, platform) {
   const p = PLATFORM_PRESETS[platform] || PLATFORM_PRESETS.tiktok;
-  const dur = (clip.endSec ?? 30) - (clip.startSec ?? 0);
+  const hasBounds = Number.isFinite(clip.startSec) && Number.isFinite(clip.endSec);
+  const dur = hasBounds ? clip.endSec - clip.startSec : null;
+  const maxTags = p.hashtagsCount ?? p.hashtags?.max ?? 5;
   const actions = [];
-  if (dur > p.maxSec) actions.push(`Trim ${dur.toFixed(0)}s → ${p.maxSec}s (keep highest-energy window)`);
+  if (dur == null) actions.push('Duration unknown — set in/out points before trimming');
+  else if (dur > p.maxSec) actions.push(`Trim ${dur.toFixed(0)}s → ${p.maxSec}s (keep highest-energy window)`);
   actions.push(`Reframe to ${p.aspect}, keep faces in center-safe zone`);
-  actions.push(`Rewrite caption ≤ ${p.captionMax} chars, ${p.hashtagsCount ?? p.hashtags?.max ?? 5} hashtags`);
-  return { platform, preset: p, actions, caption: `${clip.hookText || clip.title || 'New drop'} 🔥`, hashtags: ['#creatorai', `#${platform}`, '#shorts', '#contentops'].slice(0, p.hashtagsCount ?? 5) };
+  actions.push(`Rewrite caption ≤ ${p.captionMax} chars, up to ${maxTags} hashtags`);
+
+  const subject = (clip.hookText || clip.title || '').trim();
+  const clipTags = Array.isArray(clip.hashtags) ? clip.hashtags : [];
+  return {
+    platform,
+    preset: p,
+    actions,
+    duration: dur == null ? null : +dur.toFixed(1),
+    caption: subject || null,
+    hashtags: clipTags.length ? clipTags.slice(0, maxTags) : [],
+  };
 }
 
 module.exports = { alignScriptToTranscript, generateClips, PLATFORM_PRESETS, adaptClip };

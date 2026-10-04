@@ -48,12 +48,18 @@ export default defineConfig({
             ) {
               return 'vendor-ui';
             }
+            // Chunk by dependency group, not by substring. A previous
+            // `id.includes('react')` matched too much (@tanstack/react-query,
+            // react-colorful), which split React Router from its own
+            // @remix-run/router dependency and produced a circular chunk
+            // (vendor -> vendor-react -> vendor). Each group below is
+            // self-contained, so no group imports another.
             if (
-              id.includes('react') ||
-              id.includes('react-dom') ||
-              id.includes('react-router') ||
-              id.includes('zustand') ||
-              id.includes('@tanstack')
+              /node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler|zustand)[\\/]/.test(id)
+              // react-router v6 delegates to @remix-run/router; keep it together
+              || /node_modules[\\/](@remix-run)[\\/]/.test(id)
+              // @tanstack/react-query wraps React, so it belongs on this side too
+              || /node_modules[\\/](@tanstack)[\\/]/.test(id)
             ) {
               return 'vendor-react';
             }

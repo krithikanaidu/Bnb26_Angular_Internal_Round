@@ -13,12 +13,19 @@ function truncateWords(text, maxChars) {
 }
 
 // ---------- validation (F7.4) ----------
-function validateVariant({ caption = '', title = '', hashtags = [], duration = 0 }, preset) {
+function validateVariant({ caption = '', title = '', hashtags = [], duration = null }, preset) {
   const warnings = [];
-  if (duration > preset.duration.max) {
+  // Duration is optional: skip the check when it was never measured, and flag
+  // it so the creator knows the length rules could not be verified.
+  if (duration == null || !Number.isFinite(duration)) {
+    warnings.push({ code: 'DURATION_UNKNOWN', message: `Clip duration unknown — ${preset.label} bounds (${preset.duration.min}–${preset.duration.max}s) not verified`, fix: 'Set the clip in/out points, then re-run adapt.' });
+  } else if (duration > preset.duration.max) {
     warnings.push({ code: 'DURATION_OVER', message: `Clip is ${Math.round(duration)}s but ${preset.label} caps at ${preset.duration.max}s`, fix: 'Offer auto-trim to the highest-energy window.' });
   } else if (duration < preset.duration.min) {
     warnings.push({ code: 'DURATION_UNDER', message: `Clip is ${Math.round(duration)}s, under the ${preset.duration.min}s minimum for ${preset.label}`, fix: 'Loop or extend with b-roll.' });
+  }
+  if (!caption) {
+    warnings.push({ code: 'CAPTION_EMPTY', message: 'No caption — this clip has no hook or title to derive one from', fix: 'Add a hook in ClipAI, or write the caption manually.' });
   }
   if (caption.length > preset.caption.max_chars) {
     warnings.push({ code: 'CAPTION_OVER', message: `Caption is ${caption.length}/${preset.caption.max_chars} characters`, fix: 'Offer shorten.' });
@@ -52,9 +59,14 @@ function selectHashtags({ baseTags = [], topicTags = [], preset }) {
 
 // ---------- caption rewrite (rule 4): one LLM call for ALL platforms ----------
 async function rewriteCaptionsBatch({ hookText, title, cta }, platforms) {
+  // Derive from the clip's own text. If there is none, say so rather than
+  // inventing a caption — an empty caption is visible and fixable, a fake one
+  // looks real and ships by accident.
   const fallback = () => Object.fromEntries(platforms.map((p) => {
     const preset = PRESETS[p];
-    const base = `${hookText || title || 'New drop'} ${cta || preset.cta_default}`;
+    const subject = (hookText || title || '').trim();
+    if (!subject) return [p, ''];
+    const base = cta ? `${subject} ${cta}` : subject;
     return [p, truncateWords(base, preset.caption.max_chars)];
   }));
   const { chatJson } = require('./llmProvider');
@@ -116,8 +128,9 @@ function computeReframe({ sourceW = 1920, sourceH = 1080, targetAspect = '9:16',
 // ---------- Shorts title (rule 6) ----------
 function buildTitle({ title, hookText, platform }) {
   const preset = PRESETS[platform];
-  const raw = title || hookText || 'New drop';
-  if (!preset.caption.title_max_chars) return '';
+  // No title anywhere → no title. Do not fall back to a placeholder string.
+  const raw = (title || hookText || '').trim();
+  if (!preset.caption.title_max_chars || !raw) return '';
   return truncateWords(raw.replace(/\s*[🔥✨🚀]+\s*/g, ' ').trim(), preset.caption.title_max_chars);
 }
 
@@ -150,10 +163,14 @@ function readEdl(edl = {}) {
 // ---------- full adaptation (rules 1–8) ----------
 async function adaptMany(clip, platforms, opts = {}) {
   const valid = platforms.filter((p) => PRESETS[p]);
-  const duration = (clip.endSec ?? 30) - (clip.startSec ?? 0);
-  const hookText = clip.hookText || clip.title || 'New drop';
+  // Real clip bounds only. A null/absent bound means we genuinely do not know
+  // the duration, so it stays null and validation is skipped rather than
+  // inventing a 30s clip and warning about a trim that may not be needed.
+  const hasBounds = Number.isFinite(clip.startSec) && Number.isFinite(clip.endSec);
+  const duration = hasBounds ? clip.endSec - clip.startSec : null;
+  const hookText = (clip.hookText || clip.title || '').trim();
   const edl = opts.edlInfo || {};
-  const cta = opts.cta || edl.cta || preset_cta_default(valid);
+  const cta = opts.cta || edl.cta || presetCtaDefault(valid);
   const { engine, captions } = await rewriteCaptionsBatch(
     { hookText, title: clip.title || '', cta }, valid);
   return valid.map((platform) => {
@@ -174,23 +191,28 @@ async function adaptMany(clip, platforms, opts = {}) {
     });
     const warnings = validateVariant({ caption, title, hashtags, duration }, preset);
     const actions = [];
-    if (duration > preset.duration.max) actions.push(`Trim ${duration.toFixed(0)}s → ${preset.duration.max}s (keep highest-energy window)`);
+    if (duration == null) actions.push('Duration unknown — set in/out points before trimming');
+    else if (duration > preset.duration.max) actions.push(`Trim ${duration.toFixed(0)}s → ${preset.duration.max}s (keep highest-energy window)`);
     actions.push(`Reframe ${reframe.source} → ${preset.aspect} (${reframe.focus} crop: ${reframe.ffmpeg})`);
     actions.push(`Caption in ${preset.tone} tone, style ${captionStyle}`);
     if (edl.captionCount) actions.push(`Carries ${edl.captionCount} timed captions from EDL v${opts.edlVersion ?? '?'} (repositioned to safe zone)`);
     return {
-      clip_id: clip.id, platform, aspect: preset.aspect, duration: +duration.toFixed(1),
+      clip_id: clip.id, platform, aspect: preset.aspect,
+      duration: duration == null ? null : +duration.toFixed(1),
       title, caption, hashtags, cta, captionStyle, reframe,
       edlVersion: opts.edlVersion ?? null,
       warnings, actions,
-      status: warnings.some((w) => w.code === 'DURATION_OVER' || w.code === 'CAPTION_OVER') ? 'needs_attention' : 'ready',
+      status: warnings.some((w) => ['DURATION_OVER', 'CAPTION_OVER', 'DURATION_UNKNOWN', 'CAPTION_EMPTY'].includes(w.code)) ? 'needs_attention' : 'ready',
       engine,
     };
   });
 }
 
-function preset_cta_default(platforms) {
-  return (platforms.length && PRESETS[platforms[0]].cta_default) || 'Follow for part 2';
+// The CTA comes from a platform preset, not from thin air. That is a config
+// default, not a fabricated measurement — but it is still only applied when the
+// caller has not supplied one.
+function presetCtaDefault(platforms) {
+  return (platforms.length && PRESETS[platforms[0]].cta_default) || '';
 }
 
-module.exports = { PRESETS, validateVariant, selectHashtags, rewriteCaptionsBatch, buildTitle, computeReframe, readEdl, adaptMany };
+module.exports = { PRESETS, validateVariant, selectHashtags, rewriteCaptionsBatch, buildTitle, computeReframe, readEdl, adaptMany, presetCtaDefault };

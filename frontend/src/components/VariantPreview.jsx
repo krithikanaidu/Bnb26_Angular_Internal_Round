@@ -35,9 +35,20 @@ export default function VariantPreview({ variant, onSave, onSchedule }) {
   const tall = aspect === '9:16';
   const reframe = variant.reframe || null;
 
+  const [err, setErr] = useState(null);
+
   const save = async () => {
-    setBusy(true);
+    setBusy(true); setErr(null);
     try { await onSave?.(variant.id, { title, caption, hashtags: tagList }); }
+    // Previously swallowed entirely: a failed save left the edit looking saved.
+    catch (e) { setErr(e.response?.data?.error || 'Save failed.'); }
+    finally { setBusy(false); }
+  };
+
+  const revalidate = async () => {
+    setBusy(true); setErr(null);
+    try { await onSave?.(variant.id, { title, caption, hashtags: tagList }); }
+    catch (e) { setErr(e.response?.data?.error || 'Re-validate failed.'); }
     finally { setBusy(false); }
   };
 
@@ -46,7 +57,12 @@ export default function VariantPreview({ variant, onSave, onSchedule }) {
       <div className="row" style={{ justifyContent: 'space-between' }}>
         <b>{preset.label || variant.platform}</b>
         <span className="row">
-          <span className="pill">{variant.aspect} · {variant.duration}s</span>
+          <span className="pill">
+            {variant.aspect}
+            {/* duration is null when the clip has no in/out points yet — say
+                "unknown" rather than rendering a fabricated "30s". */}
+            {variant.duration == null ? ' · duration unknown' : ` · ${variant.duration}s`}
+          </span>
           {variant.captionStyle && <span className="pill">captions: {variant.captionStyle}</span>}
           {variant.edlVersion != null && <span className="pill">EDL v{variant.edlVersion}</span>}
           <span className="pill" style={variant.status === 'needs_attention' ? { background: 'var(--coral)', color: 'var(--paper)' } : { background: 'var(--olive)' }}>
@@ -127,9 +143,10 @@ export default function VariantPreview({ variant, onSave, onSchedule }) {
 
       <div className="row" style={{ marginTop: 12 }}>
         {dirty && <button className="primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save variant'}</button>}
-        {!dirty && <button className="ghost" onClick={() => onSave?.(variant.id, { title, caption, hashtags: tagList })}>Re-validate</button>}
+        {!dirty && <button className="ghost" onClick={revalidate} disabled={busy}>{busy ? 'Validating…' : 'Re-validate'}</button>}
         <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} style={{ maxWidth: 200 }} aria-label="Schedule time" />
-        <button onClick={() => onSchedule?.(variant, when || null)}>Schedule</button>
+        <button onClick={() => onSchedule?.(variant, when || null)} disabled={busy}>Schedule</button>
+        {err && <span className="error-label">{err}</span>}
       </div>
     </div>
   );
