@@ -3,13 +3,28 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="color-scheme" content="dark" />
-  <meta name="theme-color" content="#09090b" />
-  <meta name="description" content="CreatorAI — AI Creator Operating Platform with a built-in client-side video editor." />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#f0e8d8" />
+  <meta name="description" content="Bit &amp; Build — take one idea from a blank page to a published clip: ideation, hooks, scripts, assets, studio, auto clips, publish and insights." />
+
+  <!-- `class="dark"` on <html> is required by the video editor's own design
+       system (src/video-editor/app/globals.css reads `.dark` for its tokens).
+       The app shell uses a separate `data-bb-theme` attribute, so the two
+       themes never interfere. -->
+  <meta name="video-editor-theme-anchor" content="dark-class-on-html" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
-  <title>CreatorAI — Creator Operating Platform</title>
-  <style>html,body{background:#09090b;margin:0}</style>
+  <link
+    rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700&family=Pinyon+Script&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Bodoni+Moda:ital,wght@0,400;0,700;0,900;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap"
+  />
+
+  <title>Bit &amp; Build — Creator Operating Platform</title>
+  <!-- Paper-sheet base colour, so there is no dark flash before React mounts.
+       The video editor paints its own opaque workspace over this. -->
+  <style>html,body{background:#f0e8d8;margin:0}</style>
 </head>
 <body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body>
 </html>

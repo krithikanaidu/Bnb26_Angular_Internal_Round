@@ -47,7 +47,7 @@ export default function IdeaTopicCapture({
     <section className="ia-stage" aria-label="Idea and Topic Capture">
       <div className="card ia-idea-card">
         <div className="card-title-row">
-          <div className="row">
+          <div className="bb-row">
             <h3>Stage 1: Idea & Topic Definition</h3>
             <span className="pill">F1.3 Project</span>
             <span className="pill">F3.6 Idea Recommender</span>
@@ -82,7 +82,7 @@ export default function IdeaTopicCapture({
             />
           </div>
 
-          <div className="row" style={{ marginTop: 4 }}>
+          <div className="bb-row" style={{ marginTop: 4 }}>
             <div style={{ flex: 1, minWidth: 140 }}>
               <label htmlFor="ia-niche-input">Niche / Target Audience</label>
               <input
@@ -128,7 +128,7 @@ export default function IdeaTopicCapture({
                     if (e.key === 'Enter') applyIdea(item, idx);
                   }}
                 >
-                  <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+                  <div className="bb-row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
                     {item.niche ? <span className="ia-cat-chip stat">{item.niche}</span> : <span className="ia-cat-chip stat">Project</span>}
                     {item.tone && <span className="pill">{item.tone}</span>}
                   </div>

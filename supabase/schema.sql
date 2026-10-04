@@ -29,3 +29,17 @@ alter table "Hooks" add column if not exists "category" text default 'statement'
 alter table "PublishJobs" add column if not exists "variant_id" uuid references "PlatformVariants"(id) on delete set null;
 -- Storage bucket (or create via Dashboard > Storage):
 insert into storage.buckets (id, name, public) values ('creator-assets','creator-assets', true) on conflict (id) do nothing;
+
+-- Accounts (lowercase, matching the Sequelize models + backend/src/config/authSchema.js).
+-- password_hash holds a scrypt digest ("scrypt$N$r$p$salt$key"), never the password.
+create table if not exists "users" (
+  id uuid primary key default uuid_generate_v4(),
+  email text not null unique,
+  name text default '',
+  password_hash text not null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table "users" add column if not exists "name" text default '';
+alter table "users" add column if not exists "password_hash" text;
+create unique index if not exists "users_email_key" on "users" (lower(email));

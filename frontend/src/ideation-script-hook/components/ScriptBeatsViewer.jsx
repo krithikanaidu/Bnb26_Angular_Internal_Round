@@ -43,12 +43,12 @@ export default function ScriptBeatsViewer({ script, onScriptUpdate }) {
     <section className="ia-stage" aria-label="Script Beats Breakdown">
       <div className="card ia-beats-card">
         <div className="card-title-row">
-          <div className="row">
+          <div className="bb-row">
             <h3>Script Beats</h3>
             <span className="pill">{beats.length} Alignment Units</span>
             <span className="pill">F3.4 Units</span>
           </div>
-          <div className="row">
+          <div className="bb-row">
             <button
               type="button"
               className="ghost"

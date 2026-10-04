@@ -1,0 +1,2 @@
+[supabase] SUPABASE_URL / SUPABASE_SERVICE_KEY missing in backend/.env - storage uploads will return metadata-only (no publicUrl). Set both to enable Supabase Storage.
+[uncaughtException] listen EADDRINUSE: address already in use :::5000

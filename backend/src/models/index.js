@@ -142,6 +142,20 @@ const Metric = define('Metric', {
   retentionPct: { type: DataTypes.FLOAT, defaultValue: 0 },
 });
 
+// Account behind a signed-in session (AGENT/FEATURES.md F1.1).
+// `passwordHash` is a scrypt digest — never the password itself, never a
+// reversible encoding.
+const User = define('User', {
+  email: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    unique: true,
+    validate: { isEmail: true },
+  },
+  name: { type: DataTypes.STRING, defaultValue: '' },
+  passwordHash: { type: DataTypes.TEXT, allowNull: false },
+});
+
 Project.hasMany(Asset, { foreignKey: 'project_id' });
 Asset.belongsTo(Project, { foreignKey: 'project_id' });
 Project.hasMany(Script, { foreignKey: 'project_id' });
@@ -155,5 +169,5 @@ PlatformVariant.belongsTo(Clip, { foreignKey: 'clip_id' });
 
 module.exports = {
   sequelize, Project, Asset, Script, Hook, HookPattern, TranscriptSegment, Clip,
-  EditProject, PublishJob, PlatformVariant, Metric, ClipJob,
+  EditProject, PublishJob, PlatformVariant, Metric, ClipJob, User,
 };

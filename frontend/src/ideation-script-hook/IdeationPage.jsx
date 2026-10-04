@@ -6,6 +6,8 @@ import HookGenerator from './components/HookGenerator';
 import HookPatternLibrary from './components/HookPatternLibrary';
 import ScriptStudio from './components/ScriptStudio';
 import ScriptBeatsViewer from './components/ScriptBeatsViewer';
+import { PaperPage, PageHead, ErrorNote } from '../ui/AppKit';
+import { StickerLabel } from '../ui/StickerLabel';
 import './ideation.css';
 
 // Ideation page — orchestrates the Idea -> Hooks -> Script -> Beats pipeline
@@ -115,47 +117,45 @@ export default function IdeationPage() {
   };
 
   return (
-    <div className="ia-root">
-      {/* Header bar */}
-      <div className="page-head">
-        <div>
-          <div className="row" style={{ gap: 8, marginBottom: 4 }}>
-            <h1>Ideation, Scripts & Hooks</h1>
-            <span className="pill">Domain 3 Master Workflow</span>
-          </div>
-          <p>
-            Topic definition &rarr; viral hook generation &rarr; shootable script with live versioning &rarr; beat breakdown ready for Studio alignment.
-          </p>
-        </div>
+    <PaperPage>
+      <div className="ia-root">
+        {/* Header bar */}
+        <PageHead
+          number="01"
+          title="Ideation"
+          script="idea to script"
+          description="Topic definition → viral hook generation → shootable script with live versioning → beat breakdown ready for Studio alignment."
+          actions={
+            <div className="flex flex-col items-end gap-2">
+              <StickerLabel variant="pill" rotate={-2} color="var(--color-sticker-purple)" textColor="#fff">
+                Domain 3 workflow
+              </StickerLabel>
+              <div>
+                <label htmlFor="ia-header-proj">Target Project</label>
+                <select
+                  id="ia-header-proj"
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
+                  className="!w-auto min-w-[220px]"
+                >
+                  <option value="">Workspace Scratchpad</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>{p.title}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          }
+        />
 
-        <div className="row" style={{ gap: 12 }}>
-          <div style={{ textAlign: 'right' }}>
-            <label htmlFor="ia-header-proj" style={{ display: 'block', margin: 0, fontSize: 11, color: 'var(--txt-muted)' }}>
-              Target Project
-            </label>
-            <select
-              id="ia-header-proj"
-              value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
-              style={{ minWidth: 220 }}
-            >
-              <option value="">Workspace Scratchpad</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>{p.title}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
+        {/* Pipeline Navigation Rail */}
+        {loadError && <ErrorNote className="mt-4">{loadError}</ErrorNote>}
 
-      {/* Pipeline Navigation Rail */}
-      {loadError && <p className="error-text">⚠ {loadError}</p>}
-
-      <StageRail
-        active={activeStage}
-        reached={reachedStage}
-        onSelect={(stageKey) => setActiveStage(stageKey)}
-      />
+        <StageRail
+          active={activeStage}
+          reached={reachedStage}
+          onSelect={(stageKey) => setActiveStage(stageKey)}
+        />
 
       {/* Stage 1: Idea and Topic Capture (F1.3, F3.6) */}
       {activeStage === 'idea' && (
@@ -191,7 +191,7 @@ export default function IdeationPage() {
             onPick={handleHookPick}
           />
           <HookPatternLibrary onSelectPattern={handlePatternSelect} />
-          {patternHint && <p className="error-text">⚠ {patternHint}</p>}
+          {patternHint && <ErrorNote className="mt-3">{patternHint}</ErrorNote>}
         </>
       )}
 
@@ -220,7 +220,7 @@ export default function IdeationPage() {
         <section className="ia-history-section">
           <div className="card ia-history-card">
             <div className="card-title-row">
-              <div className="row">
+              <div className="bb-row">
                 <h3>Saved Scripts History</h3>
                 <span className="pill">{savedScripts.length} Saved</span>
               </div>
@@ -239,7 +239,7 @@ export default function IdeationPage() {
                     if (e.key === 'Enter') handleLoadSavedScript(s);
                   }}
                 >
-                  <div className="row" style={{ justifyContent: 'space-between' }}>
+                  <div className="bb-row" style={{ justifyContent: 'space-between' }}>
                     <b>{s.title || 'Untitled'}</b>
                     <span className="pill">v{s.version || 1}</span>
                   </div>
@@ -257,6 +257,7 @@ export default function IdeationPage() {
           </div>
         </section>
       )}
-    </div>
+      </div>
+    </PaperPage>
   );
 }

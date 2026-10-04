@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 
+import { StatusDot } from '../ui/StatusDot';
+import { NO_VALUE } from '../ui/AppKit';
+
 // Per-platform variant card (F7.3): true-aspect phone frame with safe-zone
 // overlay + editable caption/title/hashtags with live counters + warnings.
 // Controlled-ish: { variant, onSave(id, draft), onSchedule(variant, datetime) }.
@@ -52,102 +55,162 @@ export default function VariantPreview({ variant, onSave, onSchedule }) {
     finally { setBusy(false); }
   };
 
+  const needsAttention = variant.status === 'needs_attention';
+
   return (
-    <div className="card">
-      <div className="row" style={{ justifyContent: 'space-between' }}>
-        <b>{preset.label || variant.platform}</b>
-        <span className="row">
+    <article className="card card-hover">
+      <div className="card-title-row">
+        <h3 className="break-words">{preset.label || variant.platform}</h3>
+        <div className="bb-row shrink-0">
           <span className="pill">
-            {variant.aspect}
+            {aspect || NO_VALUE}
             {/* duration is null when the clip has no in/out points yet — say
                 "unknown" rather than rendering a fabricated "30s". */}
             {variant.duration == null ? ' · duration unknown' : ` · ${variant.duration}s`}
           </span>
-          {variant.captionStyle && <span className="pill">captions: {variant.captionStyle}</span>}
-          {variant.edlVersion != null && <span className="pill">EDL v{variant.edlVersion}</span>}
-          <span className="pill" style={variant.status === 'needs_attention' ? { background: 'var(--coral)', color: 'var(--paper)' } : { background: 'var(--olive)' }}>
-            <span className="dot" style={{ background: variant.status === 'needs_attention' ? 'var(--paper)' : 'var(--ink)' }} />
-            {variant.status === 'needs_attention' ? 'needs attention' : 'ready'}
-          </span>
-        </span>
+          {needsAttention ? (
+            <span className="pill" style={{ background: 'var(--color-status-red)', borderColor: 'var(--color-status-red)', color: '#fff' }}>
+              <StatusDot color="red" size={7} pulse={false} />
+              needs attention
+            </span>
+          ) : (
+            <span className="pill pill-olive">
+              <StatusDot color="green" size={7} pulse={false} />
+              ready
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="bb-row" style={{ gap: 6 }}>
+        {variant.captionStyle && <span className="pill">captions: {variant.captionStyle}</span>}
+        {variant.edlVersion != null && <span className="pill pill-blue">EDL v{variant.edlVersion}</span>}
       </div>
 
       {/* true-ratio frame with safe-zone overlay */}
-      <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
-        <div style={{
-          position: 'relative', flexShrink: 0, width: tall ? 96 : 150,
-          aspectRatio: aspect ? aspect.replace(':', ' / ') : '9 / 16',
-          background: 'var(--paper-2)', border: '2px solid var(--ink)', borderRadius: 12, overflow: 'hidden',
-        }}>
-          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', fontSize: 11, color: 'var(--ink-soft)' }}>preview</div>
+      <div className="flex gap-3 mt-3 items-start">
+        <div
+          className="relative flex-none"
+          style={{
+            width: tall ? 84 : 132,
+            aspectRatio: aspect ? aspect.replace(':', ' / ') : '9 / 16',
+            background: 'var(--color-surface-sunken)',
+            border: '2px solid var(--color-ink)',
+            borderRadius: 12,
+            overflow: 'hidden',
+          }}
+        >
+          <span className="absolute inset-0 grid place-items-center text-[10px] muted">
+            preview
+          </span>
           {/* Only draw a safe zone when the preset actually defines one. */}
           {safe && (
-            <div style={{
-              position: 'absolute', left: 0, right: 0,
-              top: `${(safe.top || 0) * 100}%`, bottom: `${(safe.bottom || 0) * 100}%`,
-              border: '2px dashed var(--pink)', borderLeft: 0, borderRight: 0,
-            }} title="Safe zone — keep captions inside" />
+            <div
+              style={{
+                position: 'absolute', left: 0, right: 0,
+                top: `${(safe.top || 0) * 100}%`, bottom: `${(safe.bottom || 0) * 100}%`,
+                border: '2px dashed var(--color-hot-pink)', borderLeft: 0, borderRight: 0,
+              }}
+              title="Safe zone — keep captions inside"
+            />
           )}
         </div>
-        <ul style={{ margin: 0, paddingLeft: 16, fontSize: 13 }}>
-          {(variant.actions || []).map((a, i) => <li key={i}><small>{a}</small></li>)}
+
+        <ul className="list-none p-0 m-0 flex-1 min-w-0 flex flex-col gap-1.5">
+          {(variant.actions || []).length === 0 && <li className="ex">No platform actions recorded for this variant.</li>}
+          {(variant.actions || []).map((a, i) => (
+            <li key={i} className="text-[13px] leading-snug">
+              {a}
+            </li>
+          ))}
         </ul>
       </div>
 
       {reframe && (
-        <details style={{ marginTop: 10 }}>
-          <summary><small><b>Reframe plan</b> <span className="mut">{reframe.source} → {reframe.target} · {reframe.focus} crop (render-time)</span></small></summary>
-          <pre style={{ fontSize: 12, marginTop: 6 }}>ffmpeg -vf "{reframe.ffmpeg}"{'\n'}# {reframe.note}</pre>
+        <details className="mt-3">
+          <summary>
+            Reframe plan
+            <span className="mut normal-case tracking-normal">
+              {reframe.source} → {reframe.target} · {reframe.focus} crop (render-time)
+            </span>
+          </summary>
+          <pre className="mt-2">
+            ffmpeg -vf "{reframe.ffmpeg}"{'\n'}# {reframe.note}
+          </pre>
         </details>
       )}
 
       {warnings.length > 0 && (
-        <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
+        <div className="flex flex-col gap-1.5 mt-3">
           {warnings.map((w, i) => (
-            <div key={i} className="pill" style={{ background: 'var(--yellow)', justifySelf: 'start' }}>
-              ⚠ {w.message} <span className="mut">— {w.fix}</span>
-            </div>
+            <span key={i} className="pill pill-yellow self-start" style={{ whiteSpace: 'normal', textAlign: 'left' }}>
+              ⚠ {w.message} <span className="muted">— {w.fix}</span>
+            </span>
           ))}
         </div>
       )}
 
       {maxTitle != null && (
-        <div style={{ marginTop: 10 }}>
-          <label>Title <span className="mut">({title.length}/{maxTitle})</span></label>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={maxTitle + 20} />
+        <div className="mt-3">
+          <label htmlFor={`t-${variant.id}`}>
+            Title <span className="muted">({title.length}/{maxTitle})</span>
+          </label>
+          <input id={`t-${variant.id}`} value={title} onChange={(e) => setTitle(e.target.value)} maxLength={maxTitle + 20} />
         </div>
       )}
-      <div style={{ marginTop: 10 }}>
-        <label>
+
+      <div className="mt-3">
+        <label htmlFor={`c-${variant.id}`}>
           Caption{' '}
-          <span className="mut">
+          <span className="muted">
             ({caption.length}
             {maxCaption != null ? `/${maxCaption}` : ' — platform limit unavailable'})
           </span>
         </label>
-        <textarea rows={3} value={caption} onChange={(e) => setCaption(e.target.value)} style={{ width: '100%' }} />
+        <textarea id={`c-${variant.id}`} rows={3} value={caption} onChange={(e) => setCaption(e.target.value)} />
       </div>
-      <div style={{ marginTop: 10 }}>
-        <label>
+
+      <div className="mt-3">
+        <label htmlFor={`h-${variant.id}`}>
           Hashtags{' '}
-          <span className="mut">
+          <span className="muted">
             ({tagList.length}
             {tagRange ? ` · platform wants ${tagRange.min}–${tagRange.max}, space-separated` : ' · no platform range available'})
           </span>
         </label>
-        <input value={tags} onChange={(e) => setTags(e.target.value)} placeholder={requiredTags.length ? requiredTags.join(' ') : 'Space-separated hashtags'} />
+        <input id={`h-${variant.id}`} value={tags} onChange={(e) => setTags(e.target.value)} placeholder={requiredTags.length ? requiredTags.join(' ') : 'Space-separated hashtags'} />
         {requiredTags.length > 0 && (
-          <div className="mut"><small>Required by this platform: {requiredTags.join(' ')}</small></div>
+          <p className="ex mt-1.5 !normal-case !font-body !tracking-normal">
+            Required by this platform: {requiredTags.join(' ')}
+          </p>
         )}
       </div>
 
-      <div className="row" style={{ marginTop: 12 }}>
-        {dirty && <button className="primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save variant'}</button>}
-        {!dirty && <button className="ghost" onClick={revalidate} disabled={busy}>{busy ? 'Validating…' : 'Re-validate'}</button>}
-        <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} style={{ maxWidth: 200 }} aria-label="Schedule time" />
-        <button onClick={() => onSchedule?.(variant, when || null)} disabled={busy}>Schedule</button>
+      <div className="bb-row mt-3">
+        {dirty ? (
+          <button className="primary" onClick={save} disabled={busy}>
+            {busy ? 'Saving…' : 'Save variant'}
+          </button>
+        ) : (
+          <button className="ghost" onClick={revalidate} disabled={busy}>
+            {busy ? 'Validating…' : 'Re-validate'}
+          </button>
+        )}
+        <label htmlFor={`w-${variant.id}`} className="sr-only">
+          Schedule time
+        </label>
+        <input
+          id={`w-${variant.id}`}
+          type="datetime-local"
+          value={when}
+          onChange={(e) => setWhen(e.target.value)}
+          className="!w-auto"
+        />
+        <button onClick={() => onSchedule?.(variant, when || null)} disabled={busy}>
+          Schedule
+        </button>
         {err && <span className="error-label">{err}</span>}
       </div>
-    </div>
+    </article>
   );
 }

@@ -94,7 +94,7 @@ export default function ScriptStudio({
     <section className="ia-stage" aria-label="Script Studio">
       <div className="card ia-chosen-hook-banner">
         <div className="card-title-row">
-          <div className="row">
+          <div className="bb-row">
             <span className="ia-section-badge">Chosen Opening Hook</span>
             <span className={`ia-cat-chip ${hook.category || 'statement'}`}>
               {hook.category || 'statement'}

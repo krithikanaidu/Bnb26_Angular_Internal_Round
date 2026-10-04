@@ -19,7 +19,7 @@ export default function VideoEditor() {
           <div className="ve-root">
             <Editor />
             {/* Floating home pill — bottom-left so it never covers header controls */}
-            <Link to="/" className="ve-home-pill" title="Back to CreatorAI dashboard">
+            <Link to="/dashboard" className="ve-home-pill" title="Back to the workspace">
               <span className="ve-home-pill-dot" />
               CreatorAI
             </Link>

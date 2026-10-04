@@ -104,7 +104,7 @@ export default function HookGenerator({
             placeholder="e.g. 5 SaaS pricing mistakes to avoid"
           />
 
-          <div className="row" style={{ marginTop: 12 }}>
+          <div className="bb-row" style={{ marginTop: 12 }}>
             <div style={{ flex: 1, minWidth: 120 }}>
               <label htmlFor="ia-niche">Niche (Optional)</label>
               <input
@@ -180,7 +180,7 @@ export default function HookGenerator({
             </div>
           )}
 
-          <div className="grid">
+          <div className="flex flex-col gap-3">
             {hooks.length === 0 && !busy && (
               <div className="ia-empty card">
                 <b>No hooks generated yet.</b>

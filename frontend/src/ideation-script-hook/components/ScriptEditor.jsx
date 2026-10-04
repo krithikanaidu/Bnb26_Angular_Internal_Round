@@ -49,7 +49,7 @@ export default function ScriptEditor({ script, onSave }) {
   const lineCount = rawContent ? rawContent.split('\n').length : 1;
 
   return (
-    <div className="grid ia-editor-grid">
+    <div className="ia-editor-grid">
       <div className="card ia-editor-header">
         <div className="row ia-editor-title-row">
           <input
@@ -63,7 +63,7 @@ export default function ScriptEditor({ script, onSave }) {
             aria-label="Script title"
             placeholder="Script Title"
           />
-          <div className="row">
+          <div className="bb-row">
             <span className="pill">v{script.version || 1}</span>
             <span className="pill">{words} words</span>
             <span className="pill">~{estSeconds}s read</span>

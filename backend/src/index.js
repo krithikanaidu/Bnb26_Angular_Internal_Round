@@ -8,6 +8,7 @@ const cors = require('cors');
 const morgan = require('morgan');
 const { sequelize } = require('./models');
 const { ensureBucket } = require('./config/supabase');
+const { requireAuth, optionalAuth } = require('./middleware/auth');
 
 const app = express();
 app.use(cors({ origin: (process.env.FRONTEND_URL || 'http://localhost:5173').split(',') }));
@@ -26,7 +27,7 @@ process.on('uncaughtException', (err) => {
 // Rendered shorts + uploads served for preview/download
 app.use('/media', express.static(path.join(__dirname, '..', 'media')));
 
-app.get('/api/health', (req, res) => {
+app.get('/api/health', optionalAuth, (req, res) => {
   const { sttProvider, hasStt } = require('./clippedai/keys');
   const { resolveProvider } = require('./services/llmProvider');
   const { CLIPAI_SCORE_WEIGHTS } = require('./clippedai/score');
@@ -53,16 +54,26 @@ app.get('/api/health', (req, res) => {
     // The real blend, so the UI can describe the algorithm it actually runs
     // instead of hardcoded percentages describing a different one.
     scoreWeights: CLIPAI_SCORE_WEIGHTS,
+    // Tells the marketing page whether this install has any accounts yet, so a
+    // fresh database can say "create the first one" instead of pretending a
+    // login form alone is enough.
+    accounts: require('./models').User.count().catch(() => null),
+    signedInAs: req.user ? { email: req.user.email, name: req.user.name } : null,
   });
 });
-app.use('/api/projects', require('./routes/projects'));
-app.use('/api/assets', require('./routes/assets'));
+
+// Auth is public by definition: you cannot present a token before you have one.
+app.use('/api/auth', require('./routes/auth'));
+
+// Everything below is workspace data and now requires a live session.
+app.use('/api/projects', requireAuth, require('./routes/projects'));
+app.use('/api/assets', requireAuth, require('./routes/assets'));
 // Ideation (AGENT/API.md §5) mounts before legacy /content so its
 // /hooks/generate + /scripts/* paths win over the older handlers.
-app.use('/api', require('./routes/ideation'));
-app.use('/api/content', require('./routes/ideation'));
-app.use('/api/content', require('./routes/content'));
-app.use('/api/clippedai', require('./routes/clippedai'));
+app.use('/api', requireAuth, require('./routes/ideation'));
+app.use('/api/content', requireAuth, require('./routes/ideation'));
+app.use('/api/content', requireAuth, require('./routes/content'));
+app.use('/api/clippedai', requireAuth, require('./routes/clippedai'));
 
 const PORT = process.env.PORT || 5000;
 (async () => {
@@ -85,6 +96,9 @@ const PORT = process.env.PORT || 5000;
       await sequelize.sync();
       console.log('[db] synced (plain)');
     }
+    // Same reason as clipai above: `users` is created with idempotent DDL so a
+    // database that predates auth can still register its first account.
+    await require('./config/authSchema').ensureAuthSchema();
     await ensureBucket().catch((e) => console.warn('[supabase]', e.message));
     await require('./clippedai/schema').ensureClipAiSchema();
     await require('./clippedai/jobs').recoverStuckJobs();

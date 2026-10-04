@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react';
+import { Upload, ExternalLink, Film, VolumeX } from 'lucide-react';
+
 import { api } from '../lib/api';
+import { PaperPage, PageHead, Panel, EmptyState, ErrorNote, LoadingNote } from '../ui/AppKit';
+import { SpillBin } from '../ui/SpillBin';
+import { StatusDot } from '../ui/StatusDot';
+import { useToast } from '../ui/uiStore';
 
 /**
  * Read the real duration from the file in the browser.
@@ -12,7 +18,10 @@ function readDuration(file) {
   return new Promise((resolve) => {
     const url = URL.createObjectURL(file);
     const el = document.createElement(file.type.startsWith('audio') ? 'audio' : 'video');
-    const done = (v) => { URL.revokeObjectURL(url); resolve(v); };
+    const done = (v) => {
+      URL.revokeObjectURL(url);
+      resolve(v);
+    };
     el.preload = 'metadata';
     el.onloadedmetadata = () => {
       const d = Number(el.duration);
@@ -25,6 +34,12 @@ function readDuration(file) {
   });
 }
 
+const KIND_COLOR = {
+  video: 'var(--sticker-purple)',
+  audio: 'var(--folder-blue-deep)',
+  image: 'var(--sticker-yellow)',
+};
+
 export default function Assets() {
   const [assets, setAssets] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -33,21 +48,32 @@ export default function Assets() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const toast = useToast();
 
   const load = async () => {
     setLoading(true);
     try {
       const [a, p] = await Promise.all([api.get('/assets'), api.get('/projects')]);
-      setAssets(a.data); setProjects(p.data); setError(null);
+      setAssets(a.data);
+      setProjects(p.data);
+      setError(null);
     } catch (e) {
       setError(e.response?.data?.error || 'Could not load assets. Is the backend running?');
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   const upload = async () => {
-    if (!file) { setError('Choose a file first.'); return; }
-    setBusy(true); setError(null);
+    if (!file) {
+      setError('Choose a file first.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
     try {
       const fd = new FormData();
       fd.append('file', file);
@@ -57,39 +83,140 @@ export default function Assets() {
       if (duration != null) fd.append('durationSec', String(duration));
       await api.post('/assets/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       setFile(null);
+      toast({ message: `${file.name} uploaded.`, variant: 'success' });
       await load();
     } catch (e) {
       setError(e.response?.data?.error || 'Upload failed. Is the backend running?');
-    } finally { setBusy(false); }
+      toast({ message: 'Upload failed.', variant: 'error' });
+    } finally {
+      setBusy(false);
+    }
   };
 
+  // Only the newest few files are poured into the decorative bin.
+  const binItems = assets.slice(0, 4).map((a, i) => ({
+    id: a.id,
+    label: a.fileName || `file-${i}`,
+    color: KIND_COLOR[a.kind] ?? 'var(--sticker-purple)',
+  }));
+
   return (
-    <div className="grid">
-      <h2>Asset Management</h2>
-      {error && <p className="error-text">⚠ {error}</p>}
-      <div className="card row">
-        <select value={projectId} onChange={(e) => setProjectId(e.target.value)} style={{ maxWidth: 260 }} aria-label="Project">
-          <option value="">No project</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
-        </select>
-        <input type="file" accept="video/*,image/*,audio/*" onChange={(e) => setFile(e.target.files[0])} aria-label="File" />
-        <button onClick={upload} disabled={busy || !file}>{busy ? 'Uploading…' : 'Upload to Supabase'}</button>
-      </div>
-      <div className="grid g3">
-        {assets.map((a) => (
-          <div className="card" key={a.id}>
-            <b>{a.fileName}</b> <span className="pill">{a.kind}</span>
-            <div className="mut"><small>{a.mimeType} · {(a.sizeBytes / 1024).toFixed(0)} KB</small></div>
-            {a.durationSec > 0 && <span className="pill">{Math.round(a.durationSec)}s</span>}
-            {a.meta?.hasAudio === false && <span className="pill">no audio track</span>}
-            {a.publicUrl && <div><a href={a.publicUrl} target="_blank" rel="noreferrer"><small>Open file ↗</small></a></div>}
-            <div className="mut"><small>{a.storagePath}</small></div>
+    <PaperPage>
+      <PageHead
+        number="03"
+        title="Assets"
+        script="the library"
+        description="Raw footage, stills and audio. Transcripts are produced by the Auto Clips pipeline using real speech-to-text — nothing is transcribed speculatively here."
+      />
+
+      <ErrorNote>{error}</ErrorNote>
+
+      {/* ---- Upload ---------------------------------------------------- */}
+      <Panel
+        title="Add to the library"
+        taped
+        subtitle="Stored in Supabase; duration is probed server-side with ffprobe"
+        className="mt-4"
+      >
+        <div className="bb-grid bb-g2 items-start">
+          <div className="flex flex-col gap-3">
+            <div>
+              <label htmlFor="asset-project">Project</label>
+              <select id="asset-project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                <option value="">No project</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="asset-file">File</label>
+              <input
+                id="asset-file"
+                type="file"
+                accept="video/*,image/*,audio/*"
+                onChange={(e) => setFile(e.target.files[0])}
+              />
+            </div>
+            <button onClick={upload} disabled={busy || !file} className="flex items-center gap-2 justify-center">
+              <Upload className="w-4 h-4" />
+              {busy ? 'Uploading…' : 'Upload to Supabase'}
+            </button>
           </div>
-        ))}
-      </div>
-      {!loading && assets.length === 0 && !error && (
-        <div className="mut">No assets yet — upload raw footage. Transcripts come from the ClipAI pipeline using real speech-to-text.</div>
-      )}
-      {loading && <div className="mut">Loading assets…</div>}
-    </div>
+
+          <div className="pt-14 flex justify-center">
+            <SpillBin items={binItems} />
+          </div>
+        </div>
+      </Panel>
+
+      {/* ---- Library ---------------------------------------------------- */}
+      <section aria-label="Asset library" className="mt-4">
+        <div className="card-title-row !mb-4">
+          <h2>Library</h2>
+          <span className="pill">
+            {loading ? 'loading…' : `${assets.length} file${assets.length === 1 ? '' : 's'}`}
+          </span>
+        </div>
+
+        <div className="bb-grid bb-auto">
+          {assets.map((a) => (
+            <article key={a.id} className="card card-hover">
+              <div className="card-title-row !mb-2">
+                <h3 className="break-all">{a.fileName}</h3>
+                <span className="pill">
+                  <StatusDot color={a.kind === 'audio' ? 'orange' : a.kind === 'image' ? 'purple' : 'green'} size={7} pulse={false} />
+                  {a.kind}
+                </span>
+              </div>
+
+              <div className="mono-xs muted mb-2">
+                {a.mimeType} · {(a.sizeBytes / 1024).toFixed(0)} KB
+              </div>
+
+              <div className="tags">
+                {a.durationSec > 0 && (
+                  <span className="pill pill-blue">
+                    <Film className="w-3 h-3" />
+                    {Math.round(a.durationSec)}s
+                  </span>
+                )}
+                {a.meta?.hasAudio === false && (
+                  <span className="pill pill-yellow">
+                    <VolumeX className="w-3 h-3" />
+                    no audio track
+                  </span>
+                )}
+              </div>
+
+              {a.publicUrl && (
+                <a
+                  href={a.publicUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 mt-3 mono-xs hover:underline"
+                  style={{ color: 'var(--color-brand-orange)' }}
+                >
+                  Open file
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+
+              <div className="mono-xs muted mt-2 break-all">{a.storagePath}</div>
+            </article>
+          ))}
+        </div>
+
+        {loading && <LoadingNote className="mt-4">Loading assets…</LoadingNote>}
+
+        {!loading && assets.length === 0 && !error && (
+          <EmptyState title="No assets yet">
+            Upload raw footage above. Transcripts come from the Auto Clips pipeline using real speech-to-text.
+          </EmptyState>
+        )}
+      </section>
+    </PaperPage>
   );
 }

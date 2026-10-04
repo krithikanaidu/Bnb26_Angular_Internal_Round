@@ -37,7 +37,7 @@ export default function HookPatternLibrary({ onSelectPattern }) {
     <section className="ia-stage" aria-label="Viral Hook Pattern Library">
       <div className="card ia-pattern-container">
         <div className="ia-pattern-header">
-          <div className="row">
+          <div className="bb-row">
             <h3 style={{ margin: 0 }}>Viral Hook Pattern Library</h3>
             <span className="pill">{patterns.length} Proven Structures</span>
             <span className="pill">F3.2 Library</span>
@@ -53,7 +53,7 @@ export default function HookPatternLibrary({ onSelectPattern }) {
 
         {isOpen && (
           <div style={{ marginTop: 16 }}>
-            <div className="row" style={{ marginBottom: 16 }}>
+            <div className="bb-row" style={{ marginBottom: 16 }}>
               <span className="mut" style={{ fontSize: 13, marginRight: 8 }}>Filter by category:</span>
               {CATS.map((c) => (
                 <button
@@ -79,7 +79,7 @@ export default function HookPatternLibrary({ onSelectPattern }) {
               <div className="ia-patterns">
                 {patterns.map((p) => (
                   <div className="ia-pattern" key={p.id}>
-                    <div className="row" style={{ justifyContent: 'space-between', width: '100%' }}>
+                    <div className="bb-row" style={{ justifyContent: 'space-between', width: '100%' }}>
                       <span className={`ia-cat-chip ${p.category}`}>{p.category}</span>
                       {onSelectPattern && (
                         <button
